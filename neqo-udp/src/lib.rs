@@ -21,7 +21,7 @@ use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
 /// Allows reading multiple datagrams in a single [`Socket::recv`] call.
 //
 // TODO: Experiment with different values across platforms.
-const RECV_BUF_SIZE: usize = u16::MAX as usize;
+const RECV_BUF_SIZE: usize = 1500;
 
 std::thread_local! {
     static RECV_BUF: RefCell<Vec<u8>> = RefCell::new(vec![0; RECV_BUF_SIZE]);
