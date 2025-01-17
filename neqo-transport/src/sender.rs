@@ -11,13 +11,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use neqo_common::{qdebug, qlog::NeqoQlog};
+use neqo_common::{qdebug, qlog::NeqoQlog, qwarn};
 
 use crate::{
     cc::{ClassicCongestionControl, CongestionControl, CongestionControlAlgorithm, Cubic, NewReno},
     pace::Pacer,
     pmtud::Pmtud,
     recovery::SentPacket,
+    resume::Resume,
     rtt::RttEstimate,
     Stats,
 };
@@ -29,6 +30,7 @@ pub const PACING_BURST_SIZE: usize = 2;
 pub struct PacketSender {
     cc: Box<dyn CongestionControl>,
     pacer: Pacer,
+    resume: Resume,
 }
 
 impl Display for PacketSender {
@@ -56,10 +58,12 @@ impl PacketSender {
                 }
             },
             pacer: Pacer::new(pacing_enabled, now, mtu * PACING_BURST_SIZE, mtu),
+            resume: Resume::new(),
         }
     }
 
     pub fn set_qlog(&mut self, qlog: NeqoQlog) {
+        self.resume.set_qlog(qlog.clone());
         self.cc.set_qlog(qlog);
     }
 
@@ -105,6 +109,17 @@ impl PacketSender {
         now: Instant,
         stats: &mut Stats,
     ) {
+        for ack in acked_pkts {
+            let (next_cwnd, next_sshthresh) =
+                self.resume.on_ack(ack, self.cc.bytes_in_flight(), now);
+
+            if let Some(next_cwnd) = next_cwnd {
+                self.cc.set_cwnd(next_cwnd, now);
+            }
+            if let Some(next_sshthresh) = next_sshthresh {
+                self.cc.set_ssthresh(next_sshthresh);
+            }
+        }
         self.cc.on_packets_acked(acked_pkts, rtt_est, now);
         self.pmtud_mut().on_packets_acked(acked_pkts, now, stats);
         self.maybe_update_pacer_mtu();
@@ -127,6 +142,15 @@ impl PacketSender {
             lost_packets,
             now,
         );
+
+        if ret {
+            // TODO: right packet number?
+            if let Some(next_cwnd) = self.resume.on_congestion(0, now) {
+                qdebug!("resume reduced cwnd to {next_cwnd}");
+                self.cc.set_cwnd(next_cwnd, now);
+            }
+        }
+
         // Call below may change the size of MTU probes, so it needs to happen after the CC
         // reaction above, which needs to ignore probes based on their size.
         self.pmtud_mut().on_packets_lost(lost_packets, stats, now);
@@ -136,6 +160,12 @@ impl PacketSender {
 
     /// Called when ECN CE mark received.  Returns true if the congestion window was reduced.
     pub fn on_ecn_ce_received(&mut self, largest_acked_pkt: &SentPacket, now: Instant) -> bool {
+        // FIXME: is quiche wants largest sent packet
+        if let Some(next_cwnd) = self.resume.on_congestion(largest_acked_pkt.pn(), now) {
+            qdebug!("resume reduced cwnd to {next_cwnd}");
+            self.cc.set_cwnd(next_cwnd, now);
+        }
+
         self.cc.on_ecn_ce_received(largest_acked_pkt, now)
     }
 
@@ -153,6 +183,18 @@ impl PacketSender {
         self.pacer
             .spend(pkt.time_sent(), rtt, self.cc.cwnd(), pkt.len());
         self.cc.on_packet_sent(pkt, now);
+
+        // FIXME: quiche has rtt as Optional, maybe need to extra checks to validate
+        if let Some(jump) = self.resume.on_sent(
+            rtt,
+            self.cc.cwnd(),
+            pkt.pn(),
+            false,
+            self.cc.iw_acked(),
+            now,
+        ) {
+            self.cc.set_cwnd(jump, now);
+        }
     }
 
     #[must_use]

@@ -111,6 +111,7 @@ pub struct ClassicCongestionControl<T> {
     cc_algorithm: T,
     state: State,
     congestion_window: usize, // = kInitialWindow
+    initial_cwnd: usize,
     bytes_in_flight: usize,
     acked_bytes: usize,
     ssthresh: usize,
@@ -152,6 +153,28 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
     #[must_use]
     fn cwnd(&self) -> usize {
         self.congestion_window
+    }
+
+    fn set_cwnd(&mut self, cwnd: usize, now: Instant) {
+        self.congestion_window = cwnd;
+        qlog::metrics_updated(
+            &self.qlog,
+            &[
+                QlogMetric::CongestionWindow(self.congestion_window),
+                QlogMetric::BytesInFlight(self.bytes_in_flight),
+            ],
+            now,
+        );
+    }
+
+    fn set_ssthresh(&mut self, ssthresh: usize) {
+        self.ssthresh = ssthresh;
+    }
+
+    fn iw_acked(&self) -> bool {
+        // FIXME: acked_bytes gets smaller at some point. Figure out why
+        neqo_common::qinfo!("iw_acked {} {}", self.initial_cwnd, self.acked_bytes);
+        self.initial_cwnd < self.acked_bytes
     }
 
     #[must_use]
@@ -413,6 +436,7 @@ impl<T: WindowAdjustment> ClassicCongestionControl<T> {
             cc_algorithm,
             state: State::SlowStart,
             congestion_window: cwnd_initial(pmtud.plpmtu()),
+            initial_cwnd: cwnd_initial(pmtud.plpmtu()),
             bytes_in_flight: 0,
             acked_bytes: 0,
             ssthresh: usize::MAX,
@@ -427,11 +451,6 @@ impl<T: WindowAdjustment> ClassicCongestionControl<T> {
     #[must_use]
     pub const fn ssthresh(&self) -> usize {
         self.ssthresh
-    }
-
-    #[cfg(test)]
-    pub fn set_ssthresh(&mut self, v: usize) {
-        self.ssthresh = v;
     }
 
     #[cfg(test)]
