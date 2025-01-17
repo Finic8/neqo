@@ -37,6 +37,7 @@ mod recovery;
 pub mod recv_stream;
 #[cfg(not(feature = "bench"))]
 mod recv_stream;
+mod resume;
 mod rtt;
 #[cfg(feature = "bench")]
 pub mod send_stream;

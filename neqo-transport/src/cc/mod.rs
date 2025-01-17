@@ -32,6 +32,12 @@ pub trait CongestionControl: Display + Debug {
     #[must_use]
     fn cwnd(&self) -> usize;
 
+    fn set_cwnd(&mut self, cwnd: usize, now: Instant);
+
+    fn set_ssthresh(&mut self, ssthresh: usize);
+
+    fn iw_acked(&self) -> bool;
+
     #[must_use]
     fn bytes_in_flight(&self) -> usize;
 
