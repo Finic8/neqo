@@ -159,6 +159,8 @@ impl Args {
     }
 
     fn now(&self) -> Instant {
+        // FIXME: wtf is happening here?
+        return Instant::now();
         if self.shared.qns_test.is_some() {
             // When NSS starts its anti-replay it blocks any acceptance of 0-RTT for a
             // single period.  This ensures that an attacker that is able to force a
@@ -184,7 +186,7 @@ impl Args {
 }
 
 fn qns_read_response(filename: &str) -> Result<Vec<u8>, io::Error> {
-    let path: PathBuf = ["/www", filename.trim_matches(|p| p == '/')]
+    let path: PathBuf = ["/tmp/www", filename.trim_matches(|p| p == '/')]
         .iter()
         .collect();
     fs::read(path)
