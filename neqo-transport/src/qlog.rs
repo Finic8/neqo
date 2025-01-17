@@ -74,6 +74,7 @@ pub fn connection_tparams_set(qlog: &NeqoQlog, tph: &TransportParametersHandler,
                         stateless_reset_token: hex(cid.reset_token()),
                     })
                 }),
+                bdp_tokens: None, // FIXME: missing so far
             });
 
         Some(ev_data)
@@ -314,6 +315,8 @@ pub enum QlogMetric {
     PacketsInFlight(u64),
     InRecovery(bool),
     PacingRate(u64),
+    LostCount(usize), // FIXME: not constructed
+    CubicState(u64),  // FIXME: not constructed
 }
 
 pub fn metrics_updated(qlog: &NeqoQlog, updated_metrics: &[QlogMetric], now: Instant) {
@@ -331,6 +334,8 @@ pub fn metrics_updated(qlog: &NeqoQlog, updated_metrics: &[QlogMetric], now: Ins
             let mut ssthresh: Option<u64> = None;
             let mut packets_in_flight: Option<u64> = None;
             let mut pacing_rate: Option<u64> = None;
+            let mut lost_count: Option<usize> = None;
+            let mut cubic_state: Option<u64> = None;
 
             for metric in updated_metrics {
                 match metric {
@@ -352,6 +357,8 @@ pub fn metrics_updated(qlog: &NeqoQlog, updated_metrics: &[QlogMetric], now: Ins
                     }
                     QlogMetric::PacketsInFlight(v) => packets_in_flight = Some(*v),
                     QlogMetric::PacingRate(v) => pacing_rate = Some(*v),
+                    QlogMetric::LostCount(v) => lost_count = Some(*v),
+                    QlogMetric::CubicState(v) => cubic_state = Some(*v),
                     _ => (),
                 }
             }
@@ -367,6 +374,8 @@ pub fn metrics_updated(qlog: &NeqoQlog, updated_metrics: &[QlogMetric], now: Ins
                 ssthresh,
                 packets_in_flight,
                 pacing_rate,
+                lost_count,
+                cubic_state,
             });
 
             Some(ev_data)
