@@ -990,8 +990,6 @@ dependencies = [
 [[package]]
 name = "qlog"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b5f65b920fa913ce92267bb3c4ed3b9c2f81d05f8e1376c3bbc95455eedb7df"
 dependencies = [
  "serde",
  "serde_derive",
