@@ -36,7 +36,8 @@ use crate::{
     AppError, Error, Res,
 };
 
-pub const SEND_BUFFER_SIZE: usize = 0x10_0000; // 1 MiB
+// FIXME: Buffer needs to fit at least bdp/2 bytes to jump successfully
+pub const SEND_BUFFER_SIZE: usize = 0x80_0000; // 8 MiB
 
 /// The priority that is assigned to sending data for the stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
