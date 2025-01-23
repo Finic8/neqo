@@ -12,7 +12,7 @@ use std::{
     ops::{Deref, DerefMut, Index, IndexMut},
 };
 
-use neqo_common::{qtrace, Role};
+use neqo_common::{qerror, qtrace, Role};
 
 use crate::{
     frame::{
@@ -132,6 +132,7 @@ impl SenderFlowControl<()> {
         stats: &mut FrameStats,
     ) {
         if let Some(limit) = self.blocked_needed() {
+            log::error!("FC blocked {:?}", self);
             if builder.write_varint_frame(&[FRAME_TYPE_DATA_BLOCKED, limit]) {
                 stats.data_blocked += 1;
                 tokens.push(RecoveryToken::Stream(StreamRecoveryToken::DataBlocked(
@@ -156,6 +157,7 @@ impl SenderFlowControl<StreamId> {
                 self.subject.as_u64(),
                 limit,
             ]) {
+                log::error!("FC blocked {:?}", self);
                 stats.stream_data_blocked += 1;
                 tokens.push(RecoveryToken::Stream(
                     StreamRecoveryToken::StreamDataBlocked {
@@ -239,6 +241,12 @@ where
 
         self.retired = retired;
         if self.retired + self.max_active / 2 > self.max_allowed {
+            log::warn!(
+                "FC retire {} > {}",
+                self.retired + self.max_active / 2,
+                self.max_allowed
+            );
+            log::warn!("{:?}", self);
             self.frame_pending = true;
         }
     }
@@ -247,6 +255,12 @@ where
     /// The flow control will try to send an update if possible.
     pub fn send_flowc_update(&mut self) {
         if self.retired + self.max_active > self.max_allowed {
+            log::warn!(
+                "FC send_flowc_update {} > {}",
+                self.retired + self.max_active,
+                self.max_allowed
+            );
+            log::warn!("{:?}", self);
             self.frame_pending = true;
         }
     }
@@ -265,6 +279,8 @@ where
 
     pub fn frame_lost(&mut self, maximum_data: u64) {
         if maximum_data == self.max_allowed {
+            log::warn!("FC frame_lost {} == {}", maximum_data, self.max_allowed);
+            log::warn!("{:?}", self);
             self.frame_pending = true;
         }
     }
@@ -300,6 +316,7 @@ impl ReceiverFlowControl<()> {
             return;
         }
         let max_allowed = self.next_limit();
+        neqo_common::qerror!("FC<()> {:?}", self);
         if builder.write_varint_frame(&[FRAME_TYPE_MAX_DATA, max_allowed]) {
             stats.max_data += 1;
             tokens.push(RecoveryToken::Stream(StreamRecoveryToken::MaxData(
@@ -348,6 +365,7 @@ impl ReceiverFlowControl<StreamId> {
             return;
         }
         let max_allowed = self.next_limit();
+        neqo_common::qerror!("FC<StreamId> {:?}", self);
         if builder.write_varint_frame(&[
             FRAME_TYPE_MAX_STREAM_DATA,
             self.subject.as_u64(),

@@ -173,7 +173,7 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
 
     fn iw_acked(&self) -> bool {
         // FIXME: acked_bytes gets smaller at some point. Figure out why
-        neqo_common::qinfo!("iw_acked {} {}", self.initial_cwnd, self.acked_bytes);
+        //neqo_common::qinfo!("iw_acked {} {}", self.initial_cwnd, self.acked_bytes);
         self.initial_cwnd < self.acked_bytes
     }
 
@@ -245,7 +245,7 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
 
         if is_app_limited {
             self.cc_algorithm.on_app_limited();
-            qdebug!("on_packets_acked this={self:p}, limited=1, bytes_in_flight={}, cwnd={}, state={:?}, new_acked={new_acked}", self.bytes_in_flight, self.congestion_window, self.state);
+            qinfo!("on_packets_acked this={self:p}, limited=1, bytes_in_flight={}, cwnd={}, state={:?}, new_acked={new_acked}", self.bytes_in_flight, self.congestion_window, self.state);
             return;
         }
 
@@ -255,7 +255,7 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
             let increase = min(self.ssthresh - self.congestion_window, self.acked_bytes);
             self.congestion_window += increase;
             self.acked_bytes -= increase;
-            qdebug!("[{self}] slow start += {increase}");
+            qinfo!("[{self}] slow start += {increase}");
             if self.congestion_window == self.ssthresh {
                 // This doesn't look like it is necessary, but it can happen
                 // after persistent congestion.
@@ -272,6 +272,10 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
                 rtt_est.minimum(),
                 self.max_datagram_size(),
                 now,
+            );
+            qdebug!(
+                "[{self}] normal += {bytes_for_increase} {}",
+                self.acked_bytes
             );
             debug_assert!(bytes_for_increase > 0);
             // If enough credit has been accumulated already, apply them gradually.

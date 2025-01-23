@@ -3,7 +3,7 @@
 #alias srvnet="sudo ip netns exec ns4s0f1"
 
 export RUST_BACKTRACE=1
-export RUST_LOG=debug
+export RUST_LOG=info
 #export QLOGDIR=log
 
 export PREVIOUS_RTT=600
