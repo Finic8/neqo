@@ -3,7 +3,7 @@
 export RUST_BACKTRACE=1
 #export RUST_LOG=info
 export RUST_LOG=info
-export QLOGDIR=zlog
+export QLOGDIR=../zlog
 
 export PREVIOUS_RTT=600
 export PREVIOUS_CWND_BYTES=3750000
@@ -22,13 +22,13 @@ cargo run --bin neqo-server -- \
 # --no-pacing
 
 #  --max-data \
-#  10000000000 \
+#  10_000_000_000 \
 #  --max-stream-data \
-#  1000000000 \
+#  1_000_000_000 \
 #  --max-window \
-#  10000000000 \
+#  10_000_000_000 \
 #  --max-stream-window \
-#  10000000000 \
+#  10_000_000_000 \
 #  --max-streams-bidi 500 \
 #  --max-streams-uni 500
 

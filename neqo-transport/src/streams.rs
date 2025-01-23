@@ -188,7 +188,7 @@ impl Streams {
                 self.handle_data_blocked();
             }
             Frame::StreamDataBlocked { stream_id, .. } => {
-                qtrace!("Received StreamDataBlocked");
+                neqo_common::qerror!("Received StreamDataBlocked");
                 stats.stream_data_blocked += 1;
                 // Terminate connection with STREAM_STATE_ERROR if send-only
                 // stream (-transport 19.13)
