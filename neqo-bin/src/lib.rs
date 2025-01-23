@@ -220,6 +220,10 @@ impl QuicParameters {
         let mut params = ConnectionParameters::default()
             .max_streams(StreamType::BiDi, self.max_streams_bidi)
             .max_streams(StreamType::UniDi, self.max_streams_uni)
+            // TODO: max data seems large enough?
+            .max_stream_data(StreamType::BiDi, true, 12_000_000)
+            .max_stream_data(StreamType::BiDi, false, 12_000_000)
+            .max_stream_data(StreamType::UniDi, true, 12_000_000)
             .idle_timeout(Duration::from_secs(self.idle_timeout))
             .cc_algorithm(self.congestion_control)
             .pacing(!self.no_pacing)
@@ -230,6 +234,7 @@ impl QuicParameters {
         } else {
             params
         };
+
         if let Some(&first) = self.quic_version.first() {
             let all = if self.quic_version[1..].contains(&first) {
                 &self.quic_version[1..]
