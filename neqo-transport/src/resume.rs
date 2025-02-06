@@ -30,6 +30,7 @@ pub struct Resume {
     state: State,
     enable_safe_retreat: bool,
 
+    cwnd: usize,
     pipesize: usize,
     largest_pkt_sent: u64,
 
@@ -43,6 +44,7 @@ impl Resume {
             qlog: NeqoQlog::disabled(),
             state: State::default(),
             enable_safe_retreat: true,
+            cwnd: 0,
             pipesize: 0,
             largest_pkt_sent: 0,
             saved_rtt: Duration::from_millis(600),
@@ -112,6 +114,7 @@ impl Resume {
         iw_acked: bool,
         now: Instant,
     ) -> Option<usize> {
+        self.cwnd = cwnd;
         self.largest_pkt_sent = largest_pkt_sent;
 
         if largest_pkt_sent == 0 {
@@ -123,7 +126,7 @@ impl Resume {
                         pipesize: self.pipesize as u64,
                         first_unvalidated_packet: 0,
                         last_unvalidated_packet: 0,
-                        congestion_window: Some(12345),
+                        congestion_window: Some(self.cwnd as u64),
                         ssthresh: Some(u64::MAX),
                     },
                     restored_data: Some(CarefulResumeRestoredParameters {
@@ -217,7 +220,7 @@ impl Resume {
                     pipesize: self.pipesize as u64,
                     first_unvalidated_packet: 0,
                     last_unvalidated_packet: 0,
-                    congestion_window: Some(13328),
+                    congestion_window: Some(self.cwnd as u64),
                     ssthresh: Some(u64::MAX),
                 },
                 restored_data: Some(CarefulResumeRestoredParameters {
