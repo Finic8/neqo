@@ -12,7 +12,7 @@ use qlog::events::{
 use crate::recovery::SentPacket;
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ResumeState {
+pub enum State {
     #[default]
     Reconnaissance,
     // The next two states store the first packet sent when entering that state
@@ -27,7 +27,7 @@ pub enum ResumeState {
 pub struct Resume {
     qlog: NeqoQlog,
 
-    state: ResumeState,
+    state: State,
     enable_safe_retreat: bool,
 
     pipesize: usize,
@@ -41,7 +41,7 @@ impl Resume {
     pub fn new() -> Self {
         Self {
             qlog: NeqoQlog::disabled(),
-            state: ResumeState::default(),
+            state: State::default(),
             enable_safe_retreat: true,
             pipesize: 0,
             largest_pkt_sent: 0,
@@ -61,7 +61,7 @@ impl Resume {
         now: Instant,
     ) -> (Option<usize>, Option<usize>) {
         match self.state {
-            ResumeState::Unvalidated(first_unvalidated_packet) => {
+            State::Unvalidated(first_unvalidated_packet) => {
                 self.pipesize += ack.len();
                 if ack.pn() < first_unvalidated_packet {
                     return (None, None);
@@ -70,7 +70,7 @@ impl Resume {
                 if self.pipesize < flightsize {
                     qerror!("CAREFULERESUME: next stage validating");
                     self.change_state(
-                        ResumeState::Validating(self.largest_pkt_sent),
+                        State::Validating(self.largest_pkt_sent),
                         CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
                         now,
                     );
@@ -78,27 +78,27 @@ impl Resume {
                 } else {
                     qerror!("CAREFULERESUME: complete skipping validating");
                     self.change_state(
-                        ResumeState::Normal,
+                        State::Normal,
                         CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
                         now,
                     );
                     (Some(self.pipesize), None)
                 }
             }
-            ResumeState::Validating(last_unvalidated_packet) => {
+            State::Validating(last_unvalidated_packet) => {
                 self.pipesize += ack.len();
 
                 if last_unvalidated_packet <= ack.pn() {
                     qerror!("CAREFULERESUME: complete going to normal");
                     self.change_state(
-                        ResumeState::Normal,
+                        State::Normal,
                         CarefulResumeTrigger::LastUnvalidatedPacketAcknowledged,
                         now,
                     );
                 }
                 (None, None)
             }
-            ResumeState::SafeRetreat(_) => todo!(),
+            State::SafeRetreat(_) => todo!(),
             _ => (None, None),
         }
     }
@@ -145,7 +145,7 @@ impl Resume {
             return None;
         }
 
-        if self.state != ResumeState::Reconnaissance {
+        if self.state != State::Reconnaissance {
             return None;
         }
 
@@ -154,7 +154,7 @@ impl Resume {
         if jump_cwnd <= cwnd {
             qerror!("CAREFULERESUME: abort cr: jump smaller than cwnd");
             self.change_state(
-                ResumeState::Normal,
+                State::Normal,
                 CarefulResumeTrigger::CongestionWindowLimited,
                 now,
             );
@@ -168,17 +168,13 @@ impl Resume {
                 rtt,
                 self.saved_rtt
             );
-            self.change_state(
-                ResumeState::Normal,
-                CarefulResumeTrigger::RttNotValidated,
-                now,
-            );
+            self.change_state(State::Normal, CarefulResumeTrigger::RttNotValidated, now);
             return None;
         }
 
         qerror!("CAREFULERESUME: cr: going to unvalidated");
         self.change_state(
-            ResumeState::Unvalidated(largest_pkt_sent),
+            State::Unvalidated(largest_pkt_sent),
             CarefulResumeTrigger::CongestionWindowLimited, // TODO: right trigger??
             now,
         );
@@ -190,26 +186,20 @@ impl Resume {
         // TODO: mark CR parameters as invalid
         qerror!("CAREFULERESUME: on_congestion");
         match self.state {
-            ResumeState::Unvalidated(_) if self.enable_safe_retreat => {
+            State::Unvalidated(_) if self.enable_safe_retreat => {
                 self.change_state(
-                    ResumeState::SafeRetreat(largest_pkt_sent),
+                    State::SafeRetreat(largest_pkt_sent),
                     CarefulResumeTrigger::PacketLoss,
                     now,
                 );
                 Some(self.pipesize / 2)
             }
-            ResumeState::Unvalidated(p) if self.enable_safe_retreat => {
+            State::Unvalidated(p) if self.enable_safe_retreat => {
                 // TODO: how is this different from unvalidated?
-                self.change_state(
-                    ResumeState::SafeRetreat(p),
-                    CarefulResumeTrigger::PacketLoss,
-                    now,
-                );
+                self.change_state(State::SafeRetreat(p), CarefulResumeTrigger::PacketLoss, now);
                 Some(self.pipesize / 2)
             }
-            ResumeState::Unvalidated(_)
-            | ResumeState::Validating(_)
-            | ResumeState::Reconnaissance => {
+            State::Unvalidated(_) | State::Validating(_) | State::Reconnaissance => {
                 qerror!("CAREFULERESUME: packetloss");
                 // self.change_state(ResumeState::Normal, CarefulResumeTrigger::PacketLoss, now);
                 None
@@ -218,12 +208,7 @@ impl Resume {
         }
     }
 
-    fn change_state(
-        &mut self,
-        next_state: ResumeState,
-        trigger: CarefulResumeTrigger,
-        now: Instant,
-    ) {
+    fn change_state(&mut self, next_state: State, trigger: CarefulResumeTrigger, now: Instant) {
         let event =
             EventData::CarefulResumePhaseUpdated(qlog::events::resume::CarefulResumePhaseUpdated {
                 old_phase: Some(self.state.into()),
@@ -249,14 +234,14 @@ impl Resume {
     }
 }
 
-impl From<ResumeState> for CarefulResumePhase {
-    fn from(value: ResumeState) -> Self {
+impl From<State> for CarefulResumePhase {
+    fn from(value: State) -> Self {
         match value {
-            ResumeState::Reconnaissance => Self::Reconnaissance,
-            ResumeState::Unvalidated(_) => Self::Unvalidated,
-            ResumeState::Validating(_) => Self::Validating,
-            ResumeState::SafeRetreat(_) => Self::SafeRetreat,
-            ResumeState::Normal => Self::Normal,
+            State::Reconnaissance => Self::Reconnaissance,
+            State::Unvalidated(_) => Self::Unvalidated,
+            State::Validating(_) => Self::Validating,
+            State::SafeRetreat(_) => Self::SafeRetreat,
+            State::Normal => Self::Normal,
         }
     }
 }
