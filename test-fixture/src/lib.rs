@@ -227,7 +227,13 @@ pub fn new_server(alpn: &[impl AsRef<str>], params: ConnectionParameters) -> Con
                 Role::Server,
                 Some("Neqo server qlog".to_string()),
                 Some("Neqo server qlog".to_string()),
-                "server".to_string(),
+                format!(
+                    "server-{:?}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                ),
             )
             .unwrap(),
         );
