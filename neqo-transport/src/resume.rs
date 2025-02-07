@@ -28,14 +28,14 @@ impl Default for State {
     }
 }
 
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub struct SavedParameters {
     pub rtt: Duration,
     pub cwnd: usize,
 }
 
-impl From<&SavedParameters> for CarefulResumeRestoredParameters {
-    fn from(val: &SavedParameters) -> Self {
+impl From<SavedParameters> for CarefulResumeRestoredParameters {
+    fn from(val: SavedParameters) -> Self {
         Self {
             saved_rtt: val.rtt.as_secs_f32() * 1000.0,
             saved_congestion_window: val.cwnd as u64,
@@ -174,7 +174,7 @@ impl Resume {
                             congestion_window: Some(self.cwnd as u64),
                             ssthresh: Some(u64::MAX),
                         },
-                        restored_data: Some((&self.saved).into()),
+                        restored_data: Some(self.saved.into()),
                         trigger: None,
                     },
                 );
@@ -269,7 +269,7 @@ impl Resume {
                     congestion_window: Some(self.cwnd as u64),
                     ssthresh: Some(u64::MAX),
                 },
-                restored_data: Some((&self.saved).into()),
+                restored_data: Some(self.saved.into()),
                 trigger: Some(trigger),
             });
 
