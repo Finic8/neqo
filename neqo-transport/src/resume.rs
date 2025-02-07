@@ -90,6 +90,9 @@ impl Resume {
         flightsize: usize,
         now: Instant,
     ) -> (Option<usize>, Option<usize>) {
+        if !self.enabled {
+            return (None, None);
+        }
         match self.state {
             State::Reconnaissance { mut acked_bytes } => {
                 acked_bytes += ack.len();
@@ -147,6 +150,10 @@ impl Resume {
         initial_cwnd: usize,
         now: Instant,
     ) -> Option<usize> {
+        if !self.enabled {
+            return None;
+        }
+
         self.cwnd = cwnd;
         self.largest_pkt_sent = largest_pkt_sent;
 
@@ -222,6 +229,9 @@ impl Resume {
     }
 
     pub fn on_congestion(&mut self, largest_pkt_sent: u64, now: Instant) -> Option<usize> {
+        if !self.enabled {
+            return None;
+        }
         // TODO: mark CR parameters as invalid
         qerror!("CAREFULERESUME: on_congestion");
         match self.state {
