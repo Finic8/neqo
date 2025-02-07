@@ -28,6 +28,21 @@ impl Default for State {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SavedParameters {
+    rtt: Duration,
+    cwnd: usize,
+}
+
+impl Into<CarefulResumeRestoredParameters> for &SavedParameters {
+    fn into(self) -> CarefulResumeRestoredParameters {
+        CarefulResumeRestoredParameters {
+            saved_rtt: self.rtt.as_secs_f32() * 1000.0,
+            saved_congestion_window: self.cwnd as u64,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Resume {
     qlog: NeqoQlog,
@@ -39,8 +54,7 @@ pub struct Resume {
     pipesize: usize,
     largest_pkt_sent: u64,
 
-    saved_rtt: Duration,
-    saved_cwnd: usize,
+    saved: SavedParameters,
 }
 
 impl Resume {
@@ -52,8 +66,10 @@ impl Resume {
             cwnd: 0,
             pipesize: 0,
             largest_pkt_sent: 0,
-            saved_rtt: Duration::from_millis(600),
-            saved_cwnd: 3_750_000,
+            saved: SavedParameters {
+                rtt: Duration::from_millis(600),
+                cwnd: 3_750_000,
+            },
         }
     }
 
@@ -144,10 +160,7 @@ impl Resume {
                             congestion_window: Some(self.cwnd as u64),
                             ssthresh: Some(u64::MAX),
                         },
-                        restored_data: Some(CarefulResumeRestoredParameters {
-                            saved_congestion_window: self.saved_cwnd as u64,
-                            saved_rtt: self.saved_rtt.as_secs_f32() * 1000.0,
-                        }),
+                        restored_data: Some((&self.saved).into()),
                         trigger: None,
                     },
                 );
@@ -156,7 +169,11 @@ impl Resume {
                 self.qlog.add_event_data_with_instant(|| Some(event), now);
                 return None;
             }
-            State::Reconnaissance { acked_bytes } if acked_bytes > initial_cwnd => {
+            State::Reconnaissance { acked_bytes } if acked_bytes < initial_cwnd => {
+                qerror!("!!! CWND {}/ {} {}", acked_bytes, cwnd, initial_cwnd);
+                return None;
+            }
+            State::Reconnaissance { acked_bytes } if acked_bytes >= initial_cwnd => {
                 qerror!("CAREFULERESUME: iw acked!");
             }
             _ => {
@@ -164,7 +181,7 @@ impl Resume {
             }
         }
 
-        let jump_cwnd = self.saved_cwnd / 2;
+        let jump_cwnd = self.saved.cwnd / 2;
 
         if jump_cwnd <= cwnd {
             qerror!("CAREFULERESUME: abort cr: jump smaller than cwnd");
@@ -177,11 +194,11 @@ impl Resume {
         }
 
         // FIXME: quiche has rtt as Optional, maybe need to extra checks to validate
-        if rtt <= self.saved_rtt / 2 || self.saved_rtt * 10 <= rtt {
+        if rtt <= self.saved.rtt / 2 || self.saved.rtt * 10 <= rtt {
             qerror!(
                 "CAREFULERESUME: Abort cr: current RTT too divergent from previous RTT rtt_sample={:?} previous_rtt={:?}",
                 rtt,
-                self.saved_rtt
+                self.saved.rtt
             );
             self.change_state(State::Normal, CarefulResumeTrigger::RttNotValidated, now);
             return None;
@@ -235,10 +252,7 @@ impl Resume {
                     congestion_window: Some(self.cwnd as u64),
                     ssthresh: Some(u64::MAX),
                 },
-                restored_data: Some(CarefulResumeRestoredParameters {
-                    saved_congestion_window: self.saved_cwnd as u64,
-                    saved_rtt: self.saved_rtt.as_secs_f32() * 1000.0,
-                }),
+                restored_data: Some((&self.saved).into()),
                 trigger: Some(trigger),
             });
 
