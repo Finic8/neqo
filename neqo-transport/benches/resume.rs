@@ -13,7 +13,7 @@
 //! in Rust release mode.
 use std::time::Duration;
 
-use neqo_transport::{ConnectionParameters, State};
+use neqo_transport::{ConnectionParameters, SavedParameters, State, StreamType};
 use test_fixture::{
     boxed,
     sim::{
@@ -35,24 +35,32 @@ pub fn main() {
     const MINIMUM_EXPECTED_UTILIZATION: f64 = 0.5;
 
     let geo_sat_forward_link = || {
-        let rate_byte = 50 * MBIT / 8;
-        // Router buffer set to bandwidth-delay product.
-        let capacity_byte = rate_byte * LINK_RTT_MS / 1_000;
-        TailDrop::new(rate_byte, capacity_byte, Duration::ZERO)
-    };
-
-    let geo_sat_return_link = || {
         let rate_byte = 5 * MBIT / 8;
         // Router buffer set to bandwidth-delay product.
         let capacity_byte = rate_byte * LINK_RTT_MS / 1_000;
         TailDrop::new(rate_byte, capacity_byte, Duration::ZERO)
     };
 
+    let geo_sat_return_link = || {
+        let rate_byte = 50 * MBIT / 8;
+        // Router buffer set to bandwidth-delay product.
+        let capacity_byte = rate_byte * LINK_RTT_MS / 1_000;
+        TailDrop::new(rate_byte, capacity_byte, Duration::ZERO)
+    };
+    let saved_parameters = SavedParameters {
+        rtt: Duration::from_millis(LINK_RTT_MS as u64),
+        cwnd: 3_750_000,
+    };
+
     let simulated_time = Simulator::new(
         "resume",
         boxed![
             ConnectionNode::new_client(
-                ConnectionParameters::default(),
+                ConnectionParameters::default()
+                    .pacing(false)
+                    .max_stream_data(StreamType::BiDi, true, 12_000_000)
+                    .max_stream_data(StreamType::BiDi, false, 12_000_000)
+                    .max_stream_data(StreamType::UniDi, true, 12_000_000),
                 boxed![ReachState::new(State::Confirmed)],
                 boxed![ReceiveData::new(TRANSFER_AMOUNT)]
             ),
@@ -60,7 +68,11 @@ pub fn main() {
             geo_sat_forward_link(),
             Delay::new(Duration::from_millis(LINK_RTT_MS as u64 / 2)),
             ConnectionNode::new_server(
-                ConnectionParameters::default(),
+                ConnectionParameters::default()
+                    .careful_resume(Some(saved_parameters))
+                    .max_stream_data(StreamType::BiDi, true, 12_000_000)
+                    .max_stream_data(StreamType::BiDi, false, 12_000_000)
+                    .max_stream_data(StreamType::UniDi, true, 12_000_000),
                 boxed![ReachState::new(State::Confirmed)],
                 boxed![SendData::new(TRANSFER_AMOUNT)]
             ),
