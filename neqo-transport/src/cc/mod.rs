@@ -47,7 +47,6 @@ pub trait CongestionControl: Display + Debug {
     #[must_use]
     fn cwnd_min(&self) -> usize;
 
-    #[cfg(test)]
     #[must_use]
     fn cwnd_initial(&self) -> usize;
 

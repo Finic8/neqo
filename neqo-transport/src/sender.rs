@@ -190,7 +190,7 @@ impl PacketSender {
             self.cc.cwnd(),
             pkt.pn(),
             false,
-            self.cc.iw_acked(),
+            self.cc.cwnd_initial(),
             now,
         ) {
             self.cc.set_cwnd(jump, now);

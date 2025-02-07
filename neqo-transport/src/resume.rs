@@ -3,7 +3,7 @@ use std::{
     u64,
 };
 
-use neqo_common::{qdebug, qerror, qlog::NeqoQlog, qwarn};
+use neqo_common::{qdebug, qerror, qlog::NeqoQlog};
 use qlog::events::{
     resume::{CarefulResumePhase, CarefulResumeRestoredParameters, CarefulResumeTrigger},
     EventData,
@@ -11,16 +11,21 @@ use qlog::events::{
 
 use crate::recovery::SentPacket;
 
-#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum State {
-    #[default]
-    Reconnaissance,
+    Reconnaissance { acked_bytes: usize },
     // The next two states store the first packet sent when entering that state
     Unvalidated(u64),
     Validating(u64),
     // Stores the last packet sent during the Unvalidated Phase
     SafeRetreat(u64),
     Normal,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::Reconnaissance { acked_bytes: 0 }
+    }
 }
 
 #[derive(Debug)]
@@ -63,6 +68,11 @@ impl Resume {
         now: Instant,
     ) -> (Option<usize>, Option<usize>) {
         match self.state {
+            State::Reconnaissance { mut acked_bytes } => {
+                acked_bytes += ack.len();
+                self.state = State::Reconnaissance { acked_bytes };
+                (None, None)
+            }
             State::Unvalidated(first_unvalidated_packet) => {
                 self.pipesize += ack.len();
                 if ack.pn() < first_unvalidated_packet {
@@ -111,45 +121,47 @@ impl Resume {
         cwnd: usize,
         largest_pkt_sent: u64,
         app_limited: bool,
-        iw_acked: bool,
+        initial_cwnd: usize,
         now: Instant,
     ) -> Option<usize> {
         self.cwnd = cwnd;
         self.largest_pkt_sent = largest_pkt_sent;
 
-        if largest_pkt_sent == 0 {
-            let event = EventData::CarefulResumePhaseUpdated(
-                qlog::events::resume::CarefulResumePhaseUpdated {
-                    old_phase: None,
-                    new_phase: self.state.into(),
-                    state_data: qlog::events::resume::CarefulResumeStateParameters {
-                        pipesize: self.pipesize as u64,
-                        first_unvalidated_packet: 0,
-                        last_unvalidated_packet: 0,
-                        congestion_window: Some(self.cwnd as u64),
-                        ssthresh: Some(u64::MAX),
-                    },
-                    restored_data: Some(CarefulResumeRestoredParameters {
-                        saved_congestion_window: self.saved_cwnd as u64,
-                        saved_rtt: self.saved_rtt.as_secs_f32() * 1000.0,
-                    }),
-                    trigger: None,
-                },
-            );
-
-            qdebug!("Sending qlog");
-            self.qlog.add_event_data_with_instant(|| Some(event), now);
-        }
-
         if app_limited {
             return None;
         }
-        if !iw_acked {
-            return None;
-        }
 
-        if self.state != State::Reconnaissance {
-            return None;
+        match self.state {
+            State::Reconnaissance { .. } if largest_pkt_sent == 0 => {
+                let event = EventData::CarefulResumePhaseUpdated(
+                    qlog::events::resume::CarefulResumePhaseUpdated {
+                        old_phase: None,
+                        new_phase: self.state.into(),
+                        state_data: qlog::events::resume::CarefulResumeStateParameters {
+                            pipesize: self.pipesize as u64,
+                            first_unvalidated_packet: 0,
+                            last_unvalidated_packet: 0,
+                            congestion_window: Some(self.cwnd as u64),
+                            ssthresh: Some(u64::MAX),
+                        },
+                        restored_data: Some(CarefulResumeRestoredParameters {
+                            saved_congestion_window: self.saved_cwnd as u64,
+                            saved_rtt: self.saved_rtt.as_secs_f32() * 1000.0,
+                        }),
+                        trigger: None,
+                    },
+                );
+
+                qdebug!("Sending qlog");
+                self.qlog.add_event_data_with_instant(|| Some(event), now);
+                return None;
+            }
+            State::Reconnaissance { acked_bytes } if acked_bytes > initial_cwnd => {
+                qerror!("CAREFULERESUME: iw acked!");
+            }
+            _ => {
+                return None;
+            }
         }
 
         let jump_cwnd = self.saved_cwnd / 2;
@@ -202,7 +214,7 @@ impl Resume {
                 self.change_state(State::SafeRetreat(p), CarefulResumeTrigger::PacketLoss, now);
                 Some(self.pipesize / 2)
             }
-            State::Unvalidated(_) | State::Validating(_) | State::Reconnaissance => {
+            State::Unvalidated(_) | State::Validating(_) | State::Reconnaissance { .. } => {
                 qerror!("CAREFULERESUME: packetloss");
                 // self.change_state(ResumeState::Normal, CarefulResumeTrigger::PacketLoss, now);
                 None
@@ -240,7 +252,7 @@ impl Resume {
 impl From<State> for CarefulResumePhase {
     fn from(value: State) -> Self {
         match value {
-            State::Reconnaissance => Self::Reconnaissance,
+            State::Reconnaissance { .. } => Self::Reconnaissance,
             State::Unvalidated(_) => Self::Unvalidated,
             State::Validating(_) => Self::Validating,
             State::SafeRetreat(_) => Self::SafeRetreat,

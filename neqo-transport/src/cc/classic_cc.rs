@@ -194,7 +194,6 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
         self.max_datagram_size() * 2
     }
 
-    #[cfg(test)]
     #[must_use]
     fn cwnd_initial(&self) -> usize {
         cwnd_initial(self.pmtud.plpmtu())
