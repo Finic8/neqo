@@ -69,6 +69,7 @@ pub use self::{
     pmtud::Pmtud,
     quic_datagrams::DatagramTracking,
     recv_stream::{RecvStreamStats, RECV_BUFFER_SIZE},
+    resume::SavedParameters,
     send_stream::{SendStreamStats, SEND_BUFFER_SIZE},
     shuffle::find_sni,
     stats::Stats,

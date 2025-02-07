@@ -26,6 +26,7 @@ use crate::{
     packet::PacketBuilder,
     pmtud::Pmtud,
     recovery::{RecoveryToken, SentPacket},
+    resume::SavedParameters,
     rtt::{RttEstimate, RttSource},
     sender::PacketSender,
     stats::FrameStats,
@@ -77,6 +78,7 @@ impl Paths {
         remote: SocketAddr,
         cc: CongestionControlAlgorithm,
         pacing: bool,
+        resume: Option<&SavedParameters>,
         now: Instant,
         stats: &mut Stats,
     ) -> PathRef {
@@ -84,8 +86,16 @@ impl Paths {
             .iter()
             .find_map(|p| p.borrow().received_on(local, remote).then(|| Rc::clone(p)))
             .unwrap_or_else(|| {
-                let mut p =
-                    Path::temporary(local, remote, cc, pacing, self.qlog.clone(), now, stats);
+                let mut p = Path::temporary(
+                    local,
+                    remote,
+                    cc,
+                    pacing,
+                    resume,
+                    self.qlog.clone(),
+                    now,
+                    stats,
+                );
                 if let Some(primary) = self.primary.as_ref() {
                     p.prime_rtt(primary.borrow().rtt());
                 }
@@ -519,6 +529,7 @@ impl Path {
         remote: SocketAddr,
         cc: CongestionControlAlgorithm,
         pacing: bool,
+        resume: Option<&SavedParameters>,
         qlog: NeqoQlog,
         now: Instant,
         stats: &mut Stats,
@@ -534,7 +545,8 @@ impl Path {
                 None
             }
         };
-        let mut sender = PacketSender::new(cc, pacing, Pmtud::new(remote.ip(), iface_mtu), now);
+        let mut sender =
+            PacketSender::new(cc, pacing, resume, Pmtud::new(remote.ip(), iface_mtu), now);
         sender.set_qlog(qlog.clone());
         Self {
             local,

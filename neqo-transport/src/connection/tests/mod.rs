@@ -688,6 +688,7 @@ fn assert_path_challenge_min_len(c: &Connection, d: &Datagram, now: Instant) {
         d.destination(),
         c.conn_params.get_cc_algorithm(),
         c.conn_params.pacing_enabled(),
+        c.conn_params.careful_resume_parameters(),
         now,
         &mut c.stats.borrow_mut(),
     );

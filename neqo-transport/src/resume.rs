@@ -28,24 +28,25 @@ impl Default for State {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct SavedParameters {
-    rtt: Duration,
-    cwnd: usize,
+    pub rtt: Duration,
+    pub cwnd: usize,
 }
 
-impl Into<CarefulResumeRestoredParameters> for &SavedParameters {
-    fn into(self) -> CarefulResumeRestoredParameters {
-        CarefulResumeRestoredParameters {
-            saved_rtt: self.rtt.as_secs_f32() * 1000.0,
-            saved_congestion_window: self.cwnd as u64,
+impl From<&SavedParameters> for CarefulResumeRestoredParameters {
+    fn from(val: &SavedParameters) -> Self {
+        Self {
+            saved_rtt: val.rtt.as_secs_f32() * 1000.0,
+            saved_congestion_window: val.cwnd as u64,
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Resume {
     qlog: NeqoQlog,
+    enabled: bool,
 
     state: State,
     enable_safe_retreat: bool,
@@ -58,18 +59,24 @@ pub struct Resume {
 }
 
 impl Resume {
-    pub fn new() -> Self {
+    pub fn disabled() -> Self {
         Self {
             qlog: NeqoQlog::disabled(),
+            enabled: false,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_paramters(saved: SavedParameters) -> Self {
+        Self {
+            qlog: NeqoQlog::disabled(),
+            enabled: true,
             state: State::default(),
             enable_safe_retreat: true,
             cwnd: 0,
             pipesize: 0,
             largest_pkt_sent: 0,
-            saved: SavedParameters {
-                rtt: Duration::from_millis(600),
-                cwnd: 3_750_000,
-            },
+            saved,
         }
     }
 

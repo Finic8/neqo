@@ -1011,6 +1011,7 @@ mod tests {
                 DEFAULT_ADDR,
                 CC,
                 true,
+                None,
                 NeqoQlog::default(),
                 now(),
                 &mut stats.borrow_mut(),

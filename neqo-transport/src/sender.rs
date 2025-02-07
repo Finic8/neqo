@@ -18,7 +18,7 @@ use crate::{
     pace::Pacer,
     pmtud::Pmtud,
     recovery::SentPacket,
-    resume::Resume,
+    resume::{Resume, SavedParameters},
     rtt::RttEstimate,
     Stats,
 };
@@ -44,10 +44,12 @@ impl PacketSender {
     pub fn new(
         alg: CongestionControlAlgorithm,
         pacing_enabled: bool,
+        resume: Option<&SavedParameters>,
         pmtud: Pmtud,
         now: Instant,
     ) -> Self {
         let mtu = pmtud.plpmtu();
+
         Self {
             cc: match alg {
                 CongestionControlAlgorithm::NewReno => {
@@ -58,7 +60,9 @@ impl PacketSender {
                 }
             },
             pacer: Pacer::new(pacing_enabled, now, mtu * PACING_BURST_SIZE, mtu),
-            resume: Resume::new(),
+            resume: resume
+                .copied()
+                .map_or_else(Resume::disabled, Resume::with_paramters),
         }
     }
 

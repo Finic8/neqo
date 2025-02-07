@@ -332,6 +332,7 @@ impl Connection {
             remote_addr,
             c.conn_params.get_cc_algorithm(),
             c.conn_params.pacing_enabled(),
+            c.conn_params.careful_resume_parameters(),
             NeqoQlog::default(),
             now,
             &mut c.stats.borrow_mut(),
@@ -1567,6 +1568,7 @@ impl Connection {
             d.source(),
             self.conn_params.get_cc_algorithm(),
             self.conn_params.pacing_enabled(),
+            self.conn_params.careful_resume_parameters(),
             now,
             &mut self.stats.borrow_mut(),
         );
@@ -1928,6 +1930,7 @@ impl Connection {
             remote,
             self.conn_params.get_cc_algorithm(),
             self.conn_params.pacing_enabled(),
+            self.conn_params.careful_resume_parameters(),
             now,
             &mut self.stats.borrow_mut(),
         );

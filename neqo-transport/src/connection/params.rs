@@ -10,6 +10,7 @@ pub use crate::recovery::FAST_PTO_SCALE;
 use crate::{
     connection::{ConnectionIdManager, Role, LOCAL_ACTIVE_CID_LIMIT},
     recv_stream::RECV_BUFFER_SIZE,
+    resume::SavedParameters,
     rtt::GRANULARITY,
     stream_id::StreamType,
     tparams::{self, PreferredAddress, TransportParameter, TransportParametersHandler},
@@ -81,6 +82,7 @@ pub struct ConnectionParameters {
     grease: bool,
     disable_migration: bool,
     pacing: bool,
+    careful_resume: Option<SavedParameters>,
     /// Whether the connection performs PLPMTUD.
     pmtud: bool,
     /// Whether the connection should use SNI slicing.
@@ -111,6 +113,7 @@ impl Default for ConnectionParameters {
             grease: true,
             disable_migration: false,
             pacing: true,
+            careful_resume: None,
             pmtud: false,
             sni_slicing: true,
             mlkem: true,
@@ -360,6 +363,17 @@ impl ConnectionParameters {
     #[must_use]
     pub const fn pacing(mut self, pacing: bool) -> Self {
         self.pacing = pacing;
+        self
+    }
+
+    #[must_use]
+    pub const fn careful_resume_parameters(&self) -> Option<&SavedParameters> {
+        self.careful_resume.as_ref()
+    }
+
+    #[must_use]
+    pub const fn careful_resume(mut self, saved: Option<SavedParameters>) -> Self {
+        self.careful_resume = saved;
         self
     }
 
