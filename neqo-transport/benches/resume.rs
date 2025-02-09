@@ -34,14 +34,14 @@ pub fn main() {
     const LINK_RTT_MS: usize = 600;
     const MINIMUM_EXPECTED_UTILIZATION: f64 = 0.5;
 
-    let geo_sat_forward_link = || {
+    let geo_sat_uplink = || {
         let rate_byte = 5 * MBIT / 8;
         // Router buffer set to bandwidth-delay product.
         let capacity_byte = rate_byte * LINK_RTT_MS / 1_000;
         TailDrop::new(rate_byte, capacity_byte, Duration::ZERO)
     };
 
-    let geo_sat_return_link = || {
+    let geo_sat_downlink = || {
         let rate_byte = 50 * MBIT / 8;
         // Router buffer set to bandwidth-delay product.
         let capacity_byte = rate_byte * LINK_RTT_MS / 1_000;
@@ -58,6 +58,7 @@ pub fn main() {
             ConnectionNode::new_client(
                 ConnectionParameters::default()
                     .pacing(false)
+                    .careful_resume(Some(saved_parameters))
                     .max_stream_data(StreamType::BiDi, true, 12_000_000)
                     .max_stream_data(StreamType::BiDi, false, 12_000_000)
                     .max_stream_data(StreamType::UniDi, true, 12_000_000),
@@ -65,7 +66,7 @@ pub fn main() {
                 boxed![ReceiveData::new(TRANSFER_AMOUNT)]
             ),
             Mtu::new(1500),
-            geo_sat_forward_link(),
+            geo_sat_uplink(),
             Delay::new(Duration::from_millis(LINK_RTT_MS as u64 / 2)),
             ConnectionNode::new_server(
                 ConnectionParameters::default()
@@ -77,7 +78,7 @@ pub fn main() {
                 boxed![SendData::new(TRANSFER_AMOUNT)]
             ),
             Mtu::new(1500),
-            geo_sat_return_link(),
+            geo_sat_downlink(),
             Delay::new(Duration::from_millis(LINK_RTT_MS as u64 / 2)),
         ],
     )
