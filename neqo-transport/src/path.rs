@@ -548,6 +548,14 @@ impl Path {
         let mut sender =
             PacketSender::new(cc, pacing, resume, Pmtud::new(remote.ip(), iface_mtu), now);
         sender.set_qlog(qlog.clone());
+
+        let rtt = resume
+            .iter()
+            .fold(RttEstimate::default(), |mut rtt, saved| {
+                rtt.set_initial(saved.rtt);
+                rtt
+            });
+
         Self {
             local,
             remote,
@@ -557,7 +565,7 @@ impl Path {
             state: ProbeState::ProbeNeeded { probe_count: 0 },
             validated: None,
             challenge: None,
-            rtt: RttEstimate::default(),
+            rtt,
             sender,
             received_bytes: 0,
             sent_bytes: 0,
