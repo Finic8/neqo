@@ -47,9 +47,16 @@ pub fn main() {
         let capacity_byte = rate_byte * LINK_RTT_MS / 1_000;
         TailDrop::new(rate_byte, capacity_byte, Duration::ZERO)
     };
+    let saved_rtt = SavedParameters {
+        rtt: Duration::from_millis(LINK_RTT_MS as u64),
+        cwnd: 3_750_000,
+        enabled: false,
+    };
+
     let saved_parameters = SavedParameters {
         rtt: Duration::from_millis(LINK_RTT_MS as u64),
         cwnd: 3_750_000,
+        enabled: true,
     };
 
     let simulated_time = Simulator::new(
@@ -58,7 +65,7 @@ pub fn main() {
             ConnectionNode::new_client(
                 ConnectionParameters::default()
                     .pacing(false)
-                    .careful_resume(Some(saved_parameters))
+                    .careful_resume(Some(saved_rtt))
                     .max_stream_data(StreamType::BiDi, true, 12_000_000)
                     .max_stream_data(StreamType::BiDi, false, 12_000_000)
                     .max_stream_data(StreamType::UniDi, true, 12_000_000),

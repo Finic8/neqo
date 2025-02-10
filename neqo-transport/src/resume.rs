@@ -32,6 +32,7 @@ impl Default for State {
 pub struct SavedParameters {
     pub rtt: Duration,
     pub cwnd: usize,
+    pub enabled: bool,
 }
 
 impl From<SavedParameters> for CarefulResumeRestoredParameters {
@@ -56,6 +57,7 @@ pub struct Resume {
     largest_pkt_sent: u64,
 
     saved: SavedParameters,
+    start: Option<Instant>,
 }
 
 impl Resume {
@@ -70,13 +72,14 @@ impl Resume {
     pub fn with_paramters(saved: SavedParameters) -> Self {
         Self {
             qlog: NeqoQlog::disabled(),
-            enabled: true,
+            enabled: saved.enabled,
             state: State::default(),
             enable_safe_retreat: true,
             cwnd: 0,
             pipesize: 0,
             largest_pkt_sent: 0,
             saved,
+            start: Some(Instant::now()),
         }
     }
 
@@ -184,7 +187,13 @@ impl Resume {
                 return None;
             }
             State::Reconnaissance { acked_bytes } if acked_bytes < initial_cwnd => {
-                qerror!("!!! CWND {}/ {} {}", acked_bytes, cwnd, initial_cwnd);
+                qerror!(
+                    "!!! CWND @ {:?} {}/ {} initial: {}",
+                    now.saturating_duration_since(self.start.unwrap_or(now)),
+                    acked_bytes,
+                    cwnd,
+                    initial_cwnd
+                );
                 return None;
             }
             State::Reconnaissance { acked_bytes } if acked_bytes >= initial_cwnd => {
