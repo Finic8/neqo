@@ -130,8 +130,9 @@ impl Pacer {
             self.last_update = now;
             return;
         }
+        let rate = (8.0 * cwnd as f64 / rtt.as_secs_f64()) / 1_000_000.0;
         qwarn!(
-            "\nTIME passed: {:?}, count {count} rtt {rtt:?}, cwnd: {cwnd}",
+            "PACER passed: {:?}, count {count} rtt {rtt:?}, cwnd: {cwnd}, rate: {rate}",
             now.saturating_duration_since(self.start_time)
         );
 
