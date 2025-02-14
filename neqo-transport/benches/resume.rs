@@ -29,33 +29,38 @@ pub fn main() {
 
     const MBIT: usize = 1_000 * 1_000;
 
-    const TRANSFER_AMOUNT: usize = 20 * MIB;
-    const LINK_BANDWIDTH: usize = 50 * MBIT;
+    const TRANSFER_AMOUNT: usize = 50 * MIB;
+
+    const LINK_BANDWIDTH_DOWN: usize = 50 * MBIT;
+    const LINK_BANDWIDTH_UP: usize = 5 * MBIT;
     const LINK_RTT_MS: usize = 600;
+
+    const LINK_BDP: usize = LINK_BANDWIDTH_DOWN * LINK_RTT_MS / 1_000 / 8;
+
     const MINIMUM_EXPECTED_UTILIZATION: f64 = 0.5;
 
     let geo_sat_uplink = || {
-        let rate_byte = 5 * MBIT / 8;
+        let rate_byte = LINK_BANDWIDTH_UP / 8;
         // Router buffer set to bandwidth-delay product.
         let capacity_byte = rate_byte * LINK_RTT_MS / 1_000;
         TailDrop::new(rate_byte, capacity_byte, Duration::ZERO)
     };
 
     let geo_sat_downlink = || {
-        let rate_byte = 50 * MBIT / 8;
+        let rate_byte = LINK_BANDWIDTH_DOWN / 8;
         // Router buffer set to bandwidth-delay product.
         let capacity_byte = rate_byte * LINK_RTT_MS / 1_000;
         TailDrop::new(rate_byte, capacity_byte, Duration::ZERO)
     };
     let saved_rtt = SavedParameters {
         rtt: Duration::from_millis(LINK_RTT_MS as u64),
-        cwnd: 3_750_000,
+        cwnd: LINK_BDP,
         enabled: false,
     };
 
     let saved_parameters = SavedParameters {
         rtt: Duration::from_millis(LINK_RTT_MS as u64),
-        cwnd: 3_750_000,
+        cwnd: LINK_BDP,
         enabled: true,
     };
 
@@ -66,9 +71,9 @@ pub fn main() {
                 ConnectionParameters::default()
                     .pacing(false)
                     .careful_resume(Some(saved_rtt))
-                    .max_stream_data(StreamType::BiDi, true, 12_000_000)
-                    .max_stream_data(StreamType::BiDi, false, 12_000_000)
-                    .max_stream_data(StreamType::UniDi, true, 12_000_000),
+                    .max_stream_data(StreamType::BiDi, true, 200_000_000)
+                    .max_stream_data(StreamType::BiDi, false, 200_000_000)
+                    .max_stream_data(StreamType::UniDi, true, 200_000_000),
                 boxed![ReachState::new(State::Confirmed)],
                 boxed![ReceiveData::new(TRANSFER_AMOUNT)]
             ),
@@ -78,9 +83,9 @@ pub fn main() {
             ConnectionNode::new_server(
                 ConnectionParameters::default()
                     .careful_resume(Some(saved_parameters))
-                    .max_stream_data(StreamType::BiDi, true, 12_000_000)
-                    .max_stream_data(StreamType::BiDi, false, 12_000_000)
-                    .max_stream_data(StreamType::UniDi, true, 12_000_000),
+                    .max_stream_data(StreamType::BiDi, true, 200_000_000)
+                    .max_stream_data(StreamType::BiDi, false, 200_000_000)
+                    .max_stream_data(StreamType::UniDi, true, 200_000_000),
                 boxed![ReachState::new(State::Confirmed)],
                 boxed![SendData::new(TRANSFER_AMOUNT)]
             ),
@@ -93,13 +98,20 @@ pub fn main() {
     .run();
 
     println!("sim time {}", simulated_time.as_secs_f64());
+    println!(
+        "[link] down {}, up {}, rtt {}, bdp {}",
+        LINK_BANDWIDTH_DOWN / MBIT,
+        LINK_BANDWIDTH_UP / MBIT,
+        LINK_RTT_MS,
+        LINK_BDP
+    );
 
     let achieved_bandwidth = TRANSFER_AMOUNT as f64 * 8.0 / simulated_time.as_secs_f64();
 
     assert!(
-        LINK_BANDWIDTH as f64 * MINIMUM_EXPECTED_UTILIZATION < achieved_bandwidth,
+        LINK_BANDWIDTH_DOWN as f64 * MINIMUM_EXPECTED_UTILIZATION < achieved_bandwidth,
         "expected to reach {MINIMUM_EXPECTED_UTILIZATION} of maximum bandwidth ({} Mbit/s) but got {} Mbit/s",
-        LINK_BANDWIDTH  / MBIT,
+        LINK_BANDWIDTH_DOWN / MBIT,
         achieved_bandwidth / MBIT as f64,
     );
 }
