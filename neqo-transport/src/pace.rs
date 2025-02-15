@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use neqo_common::qwarn;
+use neqo_common::{qerror, qwarn};
 
 use crate::rtt::GRANULARITY;
 
@@ -43,8 +43,6 @@ pub struct Pacer {
 
     last_packet_size: Option<usize>,
 
-    iv: Duration,
-
     start_time: Instant,
 }
 
@@ -69,7 +67,6 @@ impl Pacer {
             used: 0,
             mtu: p,
             last_packet_size: None,
-            iv: Duration::ZERO,
             start_time: now,
         }
     }
@@ -86,39 +83,12 @@ impl Pacer {
     /// and congestion window.  This doesn't update state.
     /// This returns a time, which could be in the past (this object doesn't know what
     /// the current time is).
-    pub const fn next(&self, _rtt: Duration, _cwnd: usize) -> Instant {
+    pub fn next(&self, _rtt: Duration, _cwnd: usize) -> Instant {
         if !self.enabled {
             return self.last_update;
         }
+        qwarn!("CALLING NEXT");
         self.next_time
-        /*
-
-        if self.used >= self.mtu {
-            qwarn!(
-                "[{self}] next {cwnd}/{rtt:?} no wait = {:?}",
-                self.last_update
-            );
-            return self.last_update;
-        }
-
-        // This is the inverse of the function in `spend`:
-        // self.t + rtt * (self.p - self.c) / (PACER_SPEEDUP * cwnd)
-        let r = rtt.as_nanos();
-        let d =
-            r.saturating_mul(u128::try_from(self.mtu - self.used).expect("usize fits into u128"));
-        let add = d / u128::try_from(cwnd * PACER_SPEEDUP).expect("usize fits into u128");
-        let w = u64::try_from(add).map(Duration::from_nanos).unwrap_or(rtt);
-
-        // If the increment is below the timer granularity, send immediately.
-        if w < GRANULARITY {
-            qwarn!("[{self:?}] next {cwnd}/{rtt:?} below granularity ({w:?})",);
-            return self.last_update;
-        }
-
-        let nxt = self.last_update + w;
-        qwarn!("[{self}] next {cwnd}/{rtt:?} wait {w:?} = {nxt:?}");
-        nxt
-        */
     }
 
     /// Spend credit.  This cannot fail; users of this API are expected to call
@@ -132,17 +102,15 @@ impl Pacer {
         }
         let rate = (8.0 * cwnd as f64 / rtt.as_secs_f64()) / 1_000_000.0;
         qwarn!(
-            "PACER passed: {:?}, count {count} rtt {rtt:?}, cwnd: {cwnd}, rate: {rate}",
+            "PACER passed: {:?}, count {count} rtt {rtt:?}, cwnd: {cwnd}, rate: {rate:.2}",
             now.saturating_duration_since(self.start_time)
         );
 
-        if !self.iv.is_zero() {
-            qwarn!("[{self}] -> {:?}", self.iv);
-            self.next_time = self.next_time.max(now) + self.iv;
-            self.iv = Duration::ZERO;
-        }
-
-        let cwnd_interval = u64::try_from(
+        // time to send burst capacity of data
+        //  capacity         rtt
+        // ---------- * ---------------
+        //   cwnd        PACER_SPEEDUP
+        let burst_duration = u64::try_from(
             rtt.as_nanos().saturating_mul(self.capacity as u128)
                 / u128::try_from(cwnd * PACER_SPEEDUP).expect("usize fits into u128"),
         )
@@ -150,53 +118,46 @@ impl Pacer {
         .unwrap_or(rtt);
 
         let elapsed = now.saturating_duration_since(self.last_update);
-        qwarn!("[{self}] {:?} {:?}", elapsed, cwnd_interval);
-        if elapsed > cwnd_interval {
-            qwarn!("elapesd > cwnd_interval: resetting");
+        qwarn!("[{self}] {:?} {:?}", elapsed, burst_duration);
+        if elapsed > burst_duration {
+            qerror!("elapesd > cwnd_interval: resetting");
             self.used = 0;
             self.last_update = now;
-            self.next_time = self.next_time.max(now);
+            self.next_time = now;
             self.last_packet_size = None;
-            self.iv = Duration::ZERO;
         }
 
         self.used += count;
 
         let same_size = self.last_packet_size.map_or(true, |last| last == count);
-        self.last_packet_size = Some(count);
+        if count != 0 {
+            self.last_packet_size = Some(count);
+        }
 
         if self.used >= self.capacity || !same_size {
-            qwarn!("used > cap || same_size {:?}", same_size);
-            let interval = u64::try_from(
+            if self.used >= self.capacity {
+                qwarn!("used > cap ");
+            } else if !same_size {
+                qwarn!("different size ");
+            }
+
+            let delay = u64::try_from(
                 rtt.as_nanos().saturating_mul(self.used as u128)
                     / u128::try_from(cwnd * PACER_SPEEDUP).expect("usize fits into u128"),
             )
             .map(Duration::from_nanos)
             .unwrap_or(rtt);
-            self.iv = interval;
+            qwarn!("delay: {:?}", delay);
 
             self.used = 0;
+            self.next_time = self.last_update + delay;
             self.last_update = now;
             self.last_packet_size = None;
+            qwarn!(
+                "waiting for: {:?}",
+                self.next_time.saturating_duration_since(now)
+            );
         }
-
-        /*
-                qwarn!("[{self}] spend {count} over {cwnd}, {rtt:?}");
-                // Increase the capacity by:
-                //    `(now - self.t) * PACER_SPEEDUP * cwnd / rtt`
-                // That is, the elapsed fraction of the RTT times rate that data is added.
-                let incr = now
-                    .saturating_duration_since(self.last_update)
-                    .as_nanos()
-                    .saturating_mul(u128::try_from(cwnd * PACER_SPEEDUP).expect("usize fits into u128"))
-                    .checked_div(rtt.as_nanos())
-                    .and_then(|i| usize::try_from(i).ok())
-                    .unwrap_or(self.capacity);
-
-                // Add the capacity up to a limit of `self.m`, then subtract `count`.
-                self.used = min(self.capacity, (self.used + incr).saturating_sub(count));
-                self.last_update = now;
-        */
     }
 }
 
