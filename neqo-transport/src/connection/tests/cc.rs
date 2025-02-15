@@ -15,9 +15,9 @@ use super::{
 };
 use crate::{
     connection::tests::{connect_with_rtt, new_client, new_server, now},
+    pace::PACING_BURST_SIZE,
     packet::PacketNumber,
     recovery::{ACK_ONLY_SIZE_LIMIT, PACKET_THRESHOLD},
-    sender::PACING_BURST_SIZE,
     stream_id::StreamType,
     CongestionControlAlgorithm, ConnectionParameters,
 };
