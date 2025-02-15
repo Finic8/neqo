@@ -114,11 +114,19 @@ impl PacketSender {
         stats: &mut Stats,
     ) {
         for ack in acked_pkts {
-            let (next_cwnd, next_sshthresh) =
-                self.resume.on_ack(ack, self.cc.bytes_in_flight(), now);
+            let (next_cwnd, next_sshthresh) = self.resume.on_ack(
+                ack,
+                rtt_est.estimate(),
+                self.cc.bytes_in_flight(),
+                self.cc.cwnd(),
+                self.cc.cwnd_initial(),
+                now,
+            );
 
             if let Some(next_cwnd) = next_cwnd {
                 self.cc.set_cwnd(next_cwnd, now);
+                // reset Pacer
+                self.pacer.spend(now, rtt_est.estimate(), next_cwnd, 0);
             }
             if let Some(next_sshthresh) = next_sshthresh {
                 self.cc.set_ssthresh(next_sshthresh);
@@ -184,19 +192,19 @@ impl PacketSender {
     }
 
     pub fn on_packet_sent(&mut self, pkt: &SentPacket, rtt: Duration, now: Instant) {
-        self.pacer
-            .spend(pkt.time_sent(), rtt, self.cc.cwnd(), pkt.len());
+        if pkt.ack_eliciting() {
+            self.pacer
+                .spend(pkt.time_sent(), rtt, self.cc.cwnd(), pkt.len());
+        } else {
+            qwarn!("pkt is not ack eliciting");
+        }
         self.cc.on_packet_sent(pkt, now);
 
         // FIXME: quiche has rtt as Optional, maybe need to extra checks to validate
-        if let Some(jump) = self.resume.on_sent(
-            rtt,
-            self.cc.cwnd(),
-            pkt.pn(),
-            false,
-            self.cc.cwnd_initial(),
-            now,
-        ) {
+        if let Some(jump) =
+            self.resume
+                .on_sent(self.cc.cwnd(), pkt.pn(), false, self.cc.cwnd_initial(), now)
+        {
             self.cc.set_cwnd(jump, now);
         }
     }

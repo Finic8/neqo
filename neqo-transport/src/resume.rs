@@ -3,7 +3,7 @@ use std::{
     u64,
 };
 
-use neqo_common::{qdebug, qerror, qlog::NeqoQlog};
+use neqo_common::{qdebug, qerror, qinfo, qlog::NeqoQlog};
 use qlog::events::{
     resume::{CarefulResumePhase, CarefulResumeRestoredParameters, CarefulResumeTrigger},
     EventData,
@@ -13,8 +13,14 @@ use crate::recovery::SentPacket;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum State {
-    Reconnaissance { acked_bytes: usize },
-    // The next two states store the first packet sent when entering that state
+    Reconnaissance {
+        acked_bytes: usize,
+    },
+    /// Once the last packet of the initial window is acked,
+    /// cwnd is inreased to allow pacer and cc to adjust
+    /// However the first unvalidated packet is not sent yet,
+    /// therefore the packet number is not yet available
+    Jumping,
     Unvalidated(u64),
     Validating(u64),
     // Stores the last packet sent during the Unvalidated Phase
@@ -87,20 +93,63 @@ impl Resume {
         self.qlog = qlog;
     }
 
+    fn maybe_jump(&mut self, rtt: Duration, initial_cwnd: usize, now: Instant) -> Option<usize> {
+        match self.state {
+            State::Reconnaissance { acked_bytes } if acked_bytes >= initial_cwnd => {}
+            _ => {
+                return None;
+            }
+        }
+
+        let jump_cwnd = self.saved.cwnd / 2;
+
+        if jump_cwnd <= self.cwnd {
+            qerror!("CAREFULERESUME: abort cr: jump smaller than cwnd");
+            self.change_state(
+                State::Normal,
+                CarefulResumeTrigger::CongestionWindowLimited,
+                now,
+            );
+            return None;
+        }
+
+        if rtt <= self.saved.rtt / 2 || self.saved.rtt * 10 <= rtt {
+            qerror!(
+                "CAREFULERESUME: Abort cr: current RTT too divergent from previous RTT rtt_sample={:?} previous_rtt={:?}",
+                rtt,
+                self.saved.rtt
+            );
+            self.change_state(State::Normal, CarefulResumeTrigger::RttNotValidated, now);
+            return None;
+        }
+
+        qerror!("CAREFULERESUME: cr: going to unvalidated");
+        self.pipesize = self.cwnd;
+        self.cwnd = jump_cwnd;
+        self.state = State::Jumping;
+        Some(jump_cwnd)
+    }
+
     pub fn on_ack(
         &mut self,
         ack: &SentPacket,
+        rtt: Duration,
         flightsize: usize,
+        cwnd: usize,
+        initial_cwnd: usize,
         now: Instant,
     ) -> (Option<usize>, Option<usize>) {
         if !self.enabled {
             return (None, None);
         }
+        self.cwnd = cwnd;
+
         match self.state {
             State::Reconnaissance { mut acked_bytes } => {
                 acked_bytes += ack.len();
                 self.state = State::Reconnaissance { acked_bytes };
-                (None, None)
+
+                (self.maybe_jump(rtt, initial_cwnd, now), None)
             }
             State::Unvalidated(first_unvalidated_packet) => {
                 self.pipesize += ack.len();
@@ -146,7 +195,6 @@ impl Resume {
 
     pub fn on_sent(
         &mut self,
-        rtt: Duration,
         cwnd: usize,
         largest_pkt_sent: u64,
         app_limited: bool,
@@ -184,57 +232,28 @@ impl Resume {
 
                 qdebug!("Sending qlog");
                 self.qlog.add_event_data_with_instant(|| Some(event), now);
-                return None;
+                None
             }
             State::Reconnaissance { acked_bytes } if acked_bytes < initial_cwnd => {
-                qerror!(
+                qinfo!(
                     "!!! CWND @ {:?} {}/ {} initial: {}",
                     now.saturating_duration_since(self.start.unwrap_or(now)),
                     acked_bytes,
                     cwnd,
                     initial_cwnd
                 );
-                return None;
+                None
             }
-            State::Reconnaissance { acked_bytes } if acked_bytes >= initial_cwnd => {
-                qerror!("CAREFULERESUME: iw acked!");
+            State::Jumping => {
+                self.change_state(
+                    State::Unvalidated(self.largest_pkt_sent),
+                    CarefulResumeTrigger::CongestionWindowLimited, // TODO: right trigger??
+                    now,
+                );
+                None
             }
-            _ => {
-                return None;
-            }
+            _ => None,
         }
-
-        let jump_cwnd = self.saved.cwnd / 2;
-
-        if jump_cwnd <= cwnd {
-            qerror!("CAREFULERESUME: abort cr: jump smaller than cwnd");
-            self.change_state(
-                State::Normal,
-                CarefulResumeTrigger::CongestionWindowLimited,
-                now,
-            );
-            return None;
-        }
-
-        // FIXME: quiche has rtt as Optional, maybe need to extra checks to validate
-        if rtt <= self.saved.rtt / 2 || self.saved.rtt * 10 <= rtt {
-            qerror!(
-                "CAREFULERESUME: Abort cr: current RTT too divergent from previous RTT rtt_sample={:?} previous_rtt={:?}",
-                rtt,
-                self.saved.rtt
-            );
-            self.change_state(State::Normal, CarefulResumeTrigger::RttNotValidated, now);
-            return None;
-        }
-
-        qerror!("CAREFULERESUME: cr: going to unvalidated");
-        self.change_state(
-            State::Unvalidated(largest_pkt_sent),
-            CarefulResumeTrigger::CongestionWindowLimited, // TODO: right trigger??
-            now,
-        );
-        self.pipesize = cwnd;
-        Some(jump_cwnd)
     }
 
     pub fn on_congestion(&mut self, largest_pkt_sent: u64, now: Instant) -> Option<usize> {
@@ -292,7 +311,7 @@ impl Resume {
 impl From<State> for CarefulResumePhase {
     fn from(value: State) -> Self {
         match value {
-            State::Reconnaissance { .. } => Self::Reconnaissance,
+            State::Reconnaissance { .. } | State::Jumping => Self::Reconnaissance,
             State::Unvalidated(_) => Self::Unvalidated,
             State::Validating(_) => Self::Validating,
             State::SafeRetreat(_) => Self::SafeRetreat,
