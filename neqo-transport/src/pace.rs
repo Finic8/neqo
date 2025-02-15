@@ -7,14 +7,11 @@
 // Pacer
 
 use std::{
-    cmp::min,
     fmt::{Debug, Display},
     time::{Duration, Instant},
 };
 
-use neqo_common::{qerror, qwarn};
-
-use crate::rtt::GRANULARITY;
+use neqo_common::{qdebug, qinfo};
 
 /// This value determines how much faster the pacer operates than the
 /// congestion window.
@@ -25,6 +22,9 @@ use crate::rtt::GRANULARITY;
 /// This value spaces packets over half the congestion window, which matches
 /// our current congestion controller, which double the window every RTT.
 const PACER_SPEEDUP: usize = 1;
+
+/// The number of packets we allow to burst from the pacer.
+pub const PACING_BURST_SIZE: usize = 10;
 
 /// A pacer that uses a leaky bucket.
 pub struct Pacer {
@@ -42,8 +42,6 @@ pub struct Pacer {
     mtu: usize,
 
     last_packet_size: Option<usize>,
-
-    start_time: Instant,
 }
 
 impl Pacer {
@@ -57,17 +55,16 @@ impl Pacer {
     /// The value of `p` is the packet size in bytes, which determines the minimum
     /// credit needed before a packet is sent.  This should be a substantial
     /// fraction of the maximum packet size, if not the packet size.
-    pub fn new(enabled: bool, now: Instant, m: usize, p: usize) -> Self {
-        assert!(m >= p, "maximum capacity has to be at least one packet");
+    pub fn new(enabled: bool, now: Instant, mtu: usize) -> Self {
+        assert!(0 < mtu, "mtu must be larger than 0");
         Self {
             enabled,
             last_update: now,
             next_time: now,
-            capacity: 10 * p,
+            capacity: PACING_BURST_SIZE * mtu,
             used: 0,
-            mtu: p,
+            mtu,
             last_packet_size: None,
-            start_time: now,
         }
     }
 
@@ -77,6 +74,7 @@ impl Pacer {
 
     pub fn set_mtu(&mut self, mtu: usize) {
         self.mtu = mtu;
+        self.capacity = 10 * mtu;
     }
 
     /// Determine when the next packet will be available based on the provided RTT
@@ -87,7 +85,6 @@ impl Pacer {
         if !self.enabled {
             return self.last_update;
         }
-        qwarn!("CALLING NEXT");
         self.next_time
     }
 
@@ -95,15 +92,14 @@ impl Pacer {
     /// `next()` to determine when to spend.  This takes the current time (`now`),
     /// an estimate of the round trip time (`rtt`), the estimated congestion
     /// window (`cwnd`), and the number of bytes that were sent (`count`).
-    pub fn spend(&mut self, now: Instant, rtt: Duration, cwnd: usize, count: usize) {
+    pub fn spend(&mut self, now: Instant, rtt: Duration, cwnd: usize, bytes: usize) {
         if !self.enabled {
             self.last_update = now;
             return;
         }
-        let rate = (8.0 * cwnd as f64 / rtt.as_secs_f64()) / 1_000_000.0;
-        qwarn!(
-            "PACER passed: {:?}, count {count} rtt {rtt:?}, cwnd: {cwnd}, rate: {rate:.2}",
-            now.saturating_duration_since(self.start_time)
+        let rate = ((8 * cwnd) as f64 / rtt.as_secs_f64()) / 1_000.0;
+        qinfo!(
+            "[{self}] spending bytes: {bytes} rtt {rtt:?}, cwnd: {cwnd}, rate: {rate:.3} kBit/s"
         );
 
         // time to send burst capacity of data
@@ -118,43 +114,37 @@ impl Pacer {
         .unwrap_or(rtt);
 
         let elapsed = now.saturating_duration_since(self.last_update);
-        qwarn!("[{self}] {:?} {:?}", elapsed, burst_duration);
         if elapsed > burst_duration {
-            qerror!("elapesd > cwnd_interval: resetting");
+            qdebug!(
+                "[{self}] elapesd: {elapsed:?} > burst_duration {burst_duration:?} -> resetting"
+            );
             self.used = 0;
             self.last_update = now;
             self.next_time = now;
             self.last_packet_size = None;
         }
 
-        self.used += count;
+        self.used += bytes;
 
-        let same_size = self.last_packet_size.map_or(true, |last| last == count);
-        if count != 0 {
-            self.last_packet_size = Some(count);
+        let same_size = self.last_packet_size.map_or(true, |last| last == bytes);
+        if bytes != 0 {
+            self.last_packet_size = Some(bytes);
         }
 
         if self.used >= self.capacity || !same_size {
-            if self.used >= self.capacity {
-                qwarn!("used > cap ");
-            } else if !same_size {
-                qwarn!("different size ");
-            }
-
             let delay = u64::try_from(
                 rtt.as_nanos().saturating_mul(self.used as u128)
                     / u128::try_from(cwnd * PACER_SPEEDUP).expect("usize fits into u128"),
             )
             .map(Duration::from_nanos)
             .unwrap_or(rtt);
-            qwarn!("delay: {:?}", delay);
 
             self.used = 0;
-            self.next_time = self.last_update + delay;
+            self.next_time = now + delay;
             self.last_update = now;
             self.last_packet_size = None;
-            qwarn!(
-                "waiting for: {:?}",
+            qdebug!(
+                "[{self}] waiting for: {:?}",
                 self.next_time.saturating_duration_since(now)
             );
         }
@@ -192,7 +182,7 @@ mod tests {
     #[test]
     fn even() {
         let n = now();
-        let mut p = Pacer::new(true, n, PACKET, PACKET);
+        let mut p = Pacer::new(true, n, PACKET);
         assert_eq!(p.next(RTT, CWND), n);
         p.spend(n, RTT, CWND, PACKET);
         assert_eq!(p.next(RTT, CWND), n + (RTT / 20));
@@ -201,7 +191,7 @@ mod tests {
     #[test]
     fn backwards_in_time() {
         let n = now();
-        let mut p = Pacer::new(true, n + RTT, PACKET, PACKET);
+        let mut p = Pacer::new(true, n + RTT, PACKET);
         assert_eq!(p.next(RTT, CWND), n + RTT);
         // Now spend some credit in the past using a time machine.
         p.spend(n, RTT, CWND, PACKET);
@@ -211,7 +201,7 @@ mod tests {
     #[test]
     fn pacing_disabled() {
         let n = now();
-        let mut p = Pacer::new(false, n, PACKET, PACKET);
+        let mut p = Pacer::new(false, n, PACKET);
         assert_eq!(p.next(RTT, CWND), n);
         p.spend(n, RTT, CWND, PACKET);
         assert_eq!(p.next(RTT, CWND), n);
@@ -221,7 +211,7 @@ mod tests {
     fn send_immediately_below_granularity() {
         const SHORT_RTT: Duration = Duration::from_millis(10);
         let n = now();
-        let mut p = Pacer::new(true, n, PACKET, PACKET);
+        let mut p = Pacer::new(true, n, PACKET);
         assert_eq!(p.next(SHORT_RTT, CWND), n);
         p.spend(n, SHORT_RTT, CWND, PACKET);
         assert_eq!(

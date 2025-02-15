@@ -17,11 +17,11 @@ use neqo_common::{const_max, const_min, qdebug, qinfo, qlog::NeqoQlog, qtrace};
 
 use super::CongestionControl;
 use crate::{
+    pace::PACING_BURST_SIZE,
     packet::PacketNumber,
     qlog::{self, QlogMetric},
     recovery::SentPacket,
     rtt::RttEstimate,
-    sender::PACING_BURST_SIZE,
     Pmtud,
 };
 

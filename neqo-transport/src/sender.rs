@@ -23,9 +23,6 @@ use crate::{
     Stats,
 };
 
-/// The number of packets we allow to burst from the pacer.
-pub const PACING_BURST_SIZE: usize = 2;
-
 #[derive(Debug)]
 pub struct PacketSender {
     cc: Box<dyn CongestionControl>,
@@ -59,7 +56,7 @@ impl PacketSender {
                     Box::new(ClassicCongestionControl::new(Cubic::default(), pmtud))
                 }
             },
-            pacer: Pacer::new(pacing_enabled, now, mtu * PACING_BURST_SIZE, mtu),
+            pacer: Pacer::new(pacing_enabled, now, mtu),
             resume: resume
                 .copied()
                 .map_or_else(Resume::disabled, Resume::with_paramters),
