@@ -29,13 +29,13 @@ pub fn main() {
 
     const MBIT: usize = 1_000 * 1_000;
 
-    const TRANSFER_AMOUNT: usize = 50 * MIB;
+    const TRANSFER_AMOUNT: usize = 10 * MIB;
 
-    const LINK_BANDWIDTH_DOWN: usize = 50 * MBIT;
-    const LINK_BANDWIDTH_UP: usize = 5 * MBIT;
+    const LINK_BANDWIDTH_DOWN: usize = 5 * MBIT;
+    const LINK_BANDWIDTH_UP: usize = 50 * MBIT;
     const LINK_RTT_MS: usize = 600;
 
-    const LINK_BDP: usize = LINK_BANDWIDTH_DOWN * LINK_RTT_MS / 1_000 / 8;
+    const LINK_BDP: usize = LINK_BANDWIDTH_UP * LINK_RTT_MS / 1_000 / 8;
 
     const MINIMUM_EXPECTED_UTILIZATION: f64 = 0.5;
 
@@ -69,25 +69,35 @@ pub fn main() {
         boxed![
             ConnectionNode::new_client(
                 ConnectionParameters::default()
-                    .pacing(false)
-                    .careful_resume(Some(saved_rtt))
+                    .pacing(true)
+                    .careful_resume(Some(saved_parameters))
+                    .versions(
+                        neqo_transport::Version::Version2,
+                        vec![neqo_transport::Version::Version2]
+                    )
+                    .mlkem(false)
                     .max_stream_data(StreamType::BiDi, true, 200_000_000)
                     .max_stream_data(StreamType::BiDi, false, 200_000_000)
                     .max_stream_data(StreamType::UniDi, true, 200_000_000),
                 boxed![ReachState::new(State::Confirmed)],
-                boxed![ReceiveData::new(TRANSFER_AMOUNT)]
+                boxed![SendData::new(TRANSFER_AMOUNT)]
             ),
             Mtu::new(1500),
             geo_sat_uplink(),
             Delay::new(Duration::from_millis(LINK_RTT_MS as u64 / 2)),
             ConnectionNode::new_server(
                 ConnectionParameters::default()
-                    .careful_resume(Some(saved_parameters))
+                    .versions(
+                        neqo_transport::Version::Version2,
+                        vec![neqo_transport::Version::Version2]
+                    )
+                    .mlkem(false)
+                    .careful_resume(Some(saved_rtt))
                     .max_stream_data(StreamType::BiDi, true, 200_000_000)
                     .max_stream_data(StreamType::BiDi, false, 200_000_000)
                     .max_stream_data(StreamType::UniDi, true, 200_000_000),
                 boxed![ReachState::new(State::Confirmed)],
-                boxed![SendData::new(TRANSFER_AMOUNT)]
+                boxed![ReceiveData::new(TRANSFER_AMOUNT)]
             ),
             Mtu::new(1500),
             geo_sat_downlink(),
