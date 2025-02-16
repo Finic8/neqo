@@ -20,6 +20,7 @@ mod fc;
 pub mod frame;
 #[cfg(not(fuzzing))]
 mod frame;
+mod hystartpp;
 mod pace;
 #[cfg(any(fuzzing, feature = "bench"))]
 pub mod packet;

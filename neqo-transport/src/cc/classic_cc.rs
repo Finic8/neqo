@@ -17,6 +17,7 @@ use neqo_common::{const_max, const_min, qdebug, qinfo, qlog::NeqoQlog, qtrace};
 
 use super::CongestionControl;
 use crate::{
+    hystartpp::HystartPP,
     pace::PACING_BURST_SIZE,
     packet::PacketNumber,
     qlog::{self, QlogMetric},
@@ -115,6 +116,7 @@ pub struct ClassicCongestionControl<T> {
     bytes_in_flight: usize,
     acked_bytes: usize,
     ssthresh: usize,
+    hystart: HystartPP,
     recovery_start: Option<PacketNumber>,
     /// `first_app_limited` indicates the packet number after which the application might be
     /// underutilizing the congestion window. When underutilizing the congestion window due to not
@@ -228,6 +230,8 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
             // event, we may still get ACKs for packets sent before the rebinding.
             self.bytes_in_flight = self.bytes_in_flight.saturating_sub(pkt.len());
 
+            self.hystart.on_ack(pkt, rtt_est.latest(), now);
+
             if !self.after_recovery_start(pkt) {
                 // Do not increase congestion window for packets sent before
                 // recovery last started.
@@ -252,9 +256,10 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
         if self.congestion_window < self.ssthresh {
             self.acked_bytes += new_acked;
             let increase = min(self.ssthresh - self.congestion_window, self.acked_bytes);
-            self.congestion_window += increase;
             self.acked_bytes -= increase;
-            qinfo!("[{self}] slow start += {increase}");
+            let hystart_inc = self.hystart.cwnd_increase(increase);
+            self.congestion_window += hystart_inc;
+            qinfo!("[{self}] slow start += {increase} -> {hystart_inc}");
             if self.congestion_window == self.ssthresh {
                 // This doesn't look like it is necessary, but it can happen
                 // after persistent congestion.
@@ -410,6 +415,8 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
             self.first_app_limited = pkt.pn() + 1;
         }
 
+        self.hystart.on_sent(pkt.pn());
+
         self.bytes_in_flight += pkt.len();
         qdebug!(
             "packet_sent this={self:p}, pn={}, ps={}",
@@ -434,7 +441,7 @@ const fn cwnd_initial(mtu: usize) -> usize {
 }
 
 impl<T: WindowAdjustment> ClassicCongestionControl<T> {
-    pub fn new(cc_algorithm: T, pmtud: Pmtud) -> Self {
+    pub fn new(cc_algorithm: T, pmtud: Pmtud, hystart: HystartPP) -> Self {
         Self {
             cc_algorithm,
             state: State::SlowStart,
@@ -443,6 +450,7 @@ impl<T: WindowAdjustment> ClassicCongestionControl<T> {
             bytes_in_flight: 0,
             acked_bytes: 0,
             ssthresh: usize::MAX,
+            hystart,
             recovery_start: None,
             qlog: NeqoQlog::disabled(),
             first_app_limited: 0,

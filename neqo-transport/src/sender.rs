@@ -15,6 +15,7 @@ use neqo_common::{qdebug, qlog::NeqoQlog, qwarn};
 
 use crate::{
     cc::{ClassicCongestionControl, CongestionControl, CongestionControlAlgorithm, Cubic, NewReno},
+    hystartpp::HystartPP,
     pace::Pacer,
     pmtud::Pmtud,
     recovery::SentPacket,
@@ -47,14 +48,26 @@ impl PacketSender {
     ) -> Self {
         let mtu = pmtud.plpmtu();
 
+        let hystart = resume.map_or_else(HystartPP::disabled, |saved| {
+            if saved.enabled {
+                HystartPP::new()
+            } else {
+                HystartPP::disabled()
+            }
+        });
+
         Self {
             cc: match alg {
-                CongestionControlAlgorithm::NewReno => {
-                    Box::new(ClassicCongestionControl::new(NewReno::default(), pmtud))
-                }
-                CongestionControlAlgorithm::Cubic => {
-                    Box::new(ClassicCongestionControl::new(Cubic::default(), pmtud))
-                }
+                CongestionControlAlgorithm::NewReno => Box::new(ClassicCongestionControl::new(
+                    NewReno::default(),
+                    pmtud,
+                    hystart,
+                )),
+                CongestionControlAlgorithm::Cubic => Box::new(ClassicCongestionControl::new(
+                    Cubic::default(),
+                    pmtud,
+                    hystart,
+                )),
             },
             pacer: Pacer::new(pacing_enabled, now, mtu),
             resume: resume
