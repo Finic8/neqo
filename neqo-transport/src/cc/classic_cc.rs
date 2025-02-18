@@ -152,6 +152,10 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
         self.qlog = qlog;
     }
 
+    fn set_hystart(&mut self, hystart: HystartPP) {
+        self.hystart = hystart;
+    }
+
     #[must_use]
     fn cwnd(&self) -> usize {
         self.congestion_window
@@ -257,7 +261,9 @@ impl<T: WindowAdjustment> CongestionControl for ClassicCongestionControl<T> {
             self.acked_bytes += new_acked;
             let increase = min(self.ssthresh - self.congestion_window, self.acked_bytes);
             self.acked_bytes -= increase;
-            let hystart_inc = self.hystart.cwnd_increase(increase);
+            let hystart_inc = self
+                .hystart
+                .cwnd_increase(increase, self.max_datagram_size());
             self.congestion_window += hystart_inc;
             qinfo!("[{self}] slow start += {increase} -> {hystart_inc}");
             if self.congestion_window == self.ssthresh {
@@ -441,7 +447,7 @@ const fn cwnd_initial(mtu: usize) -> usize {
 }
 
 impl<T: WindowAdjustment> ClassicCongestionControl<T> {
-    pub fn new(cc_algorithm: T, pmtud: Pmtud, hystart: HystartPP) -> Self {
+    pub fn new(cc_algorithm: T, pmtud: Pmtud) -> Self {
         Self {
             cc_algorithm,
             state: State::SlowStart,
@@ -450,7 +456,7 @@ impl<T: WindowAdjustment> ClassicCongestionControl<T> {
             bytes_in_flight: 0,
             acked_bytes: 0,
             ssthresh: usize::MAX,
-            hystart,
+            hystart: HystartPP::disabled(),
             recovery_start: None,
             qlog: NeqoQlog::disabled(),
             first_app_limited: 0,
@@ -581,6 +587,8 @@ impl<T: WindowAdjustment> ClassicCongestionControl<T> {
         if !self.after_recovery_start(last_packet) {
             return false;
         }
+
+        self.hystart.on_congestion();
 
         let (cwnd, acked_bytes) = self.cc_algorithm.reduce_cwnd(
             self.congestion_window,

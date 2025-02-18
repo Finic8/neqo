@@ -8,25 +8,25 @@ use neqo_common::{qerror, qinfo, qwarn};
 use crate::recovery::SentPacket;
 
 /// From RFC 9406:
-/// The delay increase sensitivity is determined by MIN_RTT_THRESH and MAX_RTT_THRESH.
-/// Smaller values of MIN_RTT_THRESH may cause spurious exits from slow start.
-/// Larger values of MAX_RTT_THRESH may result in slow start not exiting
+/// The delay increase sensitivity is determined by `MIN_RTT_THRESH` and `MAX_RTT_THRESH`.
+/// Smaller values of `MIN_RTT_THRESH` may cause spurious exits from slow start.
+/// Larger values of `MAX_RTT_THRESH` may result in slow start not exiting
 /// until loss is encountered for connections on large RTT paths.
 const MIN_RTT_THRESH: Duration = Duration::from_millis(4);
 const MAX_RTT_THRESH: Duration = Duration::from_millis(16);
-/// MIN_RTT_DIVISOR is a fraction of RTT to compute the delay threshold.
+/// `MIN_RTT_DIVISOR` is a fraction of RTT to compute the delay threshold.
 /// A smaller value would mean a larger threshold and thus less sensitivity to delay increase, and vice versa.
 const MIN_RTT_DIVISOR: u32 = 8;
 /// While all TCP implementations are REQUIRED to take at least one RTT sample each round,
-/// implementations of HyStart++ are RECOMMENDED to take at least N_RTT_SAMPLE RTT samples.
-/// Using lower values of N_RTT_SAMPLE will lower the accuracy of the measured RTT for the round;
+/// implementations of `HyStart++` are RECOMMENDED to take at least `N_RTT_SAMPLE` RTT samples.
+/// Using lower values of `N_RTT_SAMPLE` will lower the accuracy of the measured RTT for the round;
 /// higher values will improve accuracy at the cost of more processing.
 const N_RTT_SAMPLE: usize = 8;
-/// The minimum value of CSS_GROWTH_DIVISOR MUST be at least 2.
+/// The minimum value of `CSS_GROWTH_DIVISOR` MUST be at least 2.
 /// A value of 1 results in the same aggressive behavior as regular slow start.
 /// Values larger than 4 will cause the algorithm to be less aggressive and maybe less performant.
 const CSS_GROWTH_DIVISOR: usize = 4;
-/// Smaller values of CSS_ROUNDS may miss detecting jitter, and larger values may limit performance.
+/// Smaller values of `CSS_ROUNDS` may miss detecting jitter, and larger values may limit performance.
 const CSS_ROUNDS: usize = 5;
 // const L = infinity if paced, L = 8 if non-paced
 
@@ -43,12 +43,12 @@ pub enum State {
 impl Display for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            State::SlowStart => write!(f, "SS"),
-            State::CSS {
+            Self::SlowStart => write!(f, "SS"),
+            Self::CSS {
                 baseline_min_rtt,
                 rounds,
             } => write!(f, "CSS round {rounds}: {baseline_min_rtt:?}"),
-            State::CongestionAvoidance => write!(f, "CA"),
+            Self::CongestionAvoidance => write!(f, "CA"),
         }
     }
 }
@@ -186,16 +186,20 @@ impl HystartPP {
     }
 
     pub fn on_congestion(&mut self) {
+        qerror!("[{self}] going to CA");
         self.state = State::CongestionAvoidance;
     }
 
-    pub fn cwnd_increase(&self, pkt_size: usize) -> usize {
+    pub fn cwnd_increase(&self, increase: usize, max_datagram_size: usize) -> usize {
+        const L: usize = 1;
+
         match self.state {
             State::CSS { .. } => {
                 qwarn!("[{self}] reducing cwnd increase");
-                pkt_size / CSS_GROWTH_DIVISOR
+                increase / CSS_GROWTH_DIVISOR
             }
-            _ => pkt_size,
+            State::SlowStart => increase,
+            State::CongestionAvoidance => increase,
         }
     }
 }

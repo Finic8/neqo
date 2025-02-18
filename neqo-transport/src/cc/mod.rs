@@ -14,7 +14,7 @@ use std::{
 
 use neqo_common::qlog::NeqoQlog;
 
-use crate::{recovery::SentPacket, rtt::RttEstimate, Error, Pmtud};
+use crate::{hystartpp::HystartPP, recovery::SentPacket, rtt::RttEstimate, Error, Pmtud};
 
 mod classic_cc;
 mod cubic;
@@ -28,6 +28,8 @@ pub use new_reno::NewReno;
 
 pub trait CongestionControl: Display + Debug {
     fn set_qlog(&mut self, qlog: NeqoQlog);
+
+    fn set_hystart(&mut self, hystart: HystartPP);
 
     #[must_use]
     fn cwnd(&self) -> usize;

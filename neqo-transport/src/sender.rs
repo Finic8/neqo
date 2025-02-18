@@ -48,27 +48,23 @@ impl PacketSender {
     ) -> Self {
         let mtu = pmtud.plpmtu();
 
-        let hystart = resume.map_or_else(HystartPP::disabled, |saved| {
-            if saved.enabled {
-                HystartPP::new()
-            } else {
-                HystartPP::disabled()
+        let hystart = match std::env::var_os("ENABLE_HYSTART") {
+            Some(_) => HystartPP::new(),
+            None => HystartPP::disabled(),
+        };
+
+        let mut cc: Box<dyn CongestionControl> = match alg {
+            CongestionControlAlgorithm::NewReno => {
+                Box::new(ClassicCongestionControl::new(NewReno::default(), pmtud))
             }
-        });
+            CongestionControlAlgorithm::Cubic => {
+                Box::new(ClassicCongestionControl::new(Cubic::default(), pmtud))
+            }
+        };
+        cc.set_hystart(hystart);
 
         Self {
-            cc: match alg {
-                CongestionControlAlgorithm::NewReno => Box::new(ClassicCongestionControl::new(
-                    NewReno::default(),
-                    pmtud,
-                    hystart,
-                )),
-                CongestionControlAlgorithm::Cubic => Box::new(ClassicCongestionControl::new(
-                    Cubic::default(),
-                    pmtud,
-                    hystart,
-                )),
-            },
+            cc,
             pacer: Pacer::new(pacing_enabled, now, mtu),
             resume: resume
                 .copied()
