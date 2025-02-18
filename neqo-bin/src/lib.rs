@@ -16,8 +16,8 @@ use std::{
 
 use clap::Parser;
 use neqo_transport::{
-    tparams::PreferredAddress, CongestionControlAlgorithm, ConnectionParameters, StreamType,
-    Version,
+    tparams::PreferredAddress, CongestionControlAlgorithm, ConnectionParameters, SavedParameters,
+    StreamType, Version,
 };
 
 pub mod client;
@@ -135,6 +135,14 @@ pub struct QuicParameters {
     #[arg(name = "preferred-address-v6", long)]
     /// An IPv6 address for the server preferred address.
     pub preferred_address_v6: Option<String>,
+
+    #[arg(long = "cr-saved-rtt")]
+    // saved rtt in ms
+    pub cr_saved_rtt: Option<u64>,
+
+    #[arg(long = "cr-saved-cwnd")]
+    // saved congestion window in bytes
+    pub cr_saved_cwnd: Option<usize>,
 }
 
 #[cfg(any(test, feature = "bench"))]
@@ -151,6 +159,8 @@ impl Default for QuicParameters {
             preferred_address_v4: None,
             preferred_address_v6: None,
             no_sni_slicing: false,
+            cr_saved_rtt: None,
+            cr_saved_cwnd: None,
         }
     }
 }
@@ -216,10 +226,23 @@ impl QuicParameters {
     }
 
     #[must_use]
+    pub fn cr_saved_parameters(&self) -> Option<SavedParameters> {
+        self.cr_saved_rtt
+            .map(Duration::from_millis)
+            .zip(self.cr_saved_cwnd)
+            .map(|(rtt, cwnd)| SavedParameters {
+                rtt,
+                cwnd,
+                enabled: true,
+            })
+    }
+
+    #[must_use]
     pub fn get(&self, alpn: &str) -> ConnectionParameters {
         let mut params = ConnectionParameters::default()
             .max_streams(StreamType::BiDi, self.max_streams_bidi)
             .max_streams(StreamType::UniDi, self.max_streams_uni)
+            .careful_resume(self.cr_saved_parameters())
             // TODO: max data seems large enough?
             .max_stream_data(StreamType::BiDi, true, 12_000_000)
             .max_stream_data(StreamType::BiDi, false, 12_000_000)
