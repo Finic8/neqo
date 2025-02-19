@@ -140,10 +140,10 @@ impl Pacer {
             .unwrap_or(rtt);
 
             self.used = 0;
-            self.next_time = now + delay;
+            self.next_time = self.last_update + delay;
             self.last_update = now;
             self.last_packet_size = None;
-            qdebug!(
+            qinfo!(
                 "[{self}] waiting for: {:?}",
                 self.next_time.saturating_duration_since(now)
             );
