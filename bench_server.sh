@@ -5,17 +5,14 @@ export RUST_BACKTRACE=1
 export RUST_LOG=info
 export QLOGDIR=../zlog
 
-export PREVIOUS_RTT=600
-export PREVIOUS_CWND_BYTES=3750000
-# values from ana
-#export PREVIOUS_CWND_BYTES=750000
-
 #sudo ip netns exec ns4s0f1 \
 #  ./target/debug/quiche-server \
 cargo run --bin neqo-server -- \
   --qns-test 'http3' \
   --qlog-dir $QLOGDIR \
   --cc 'cubic' \
+  --cr-saved-rtt 600 \
+  --cr-saved-cwnd 3750000 \
   \
   '0.0.0.0:4433'
 
