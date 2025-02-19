@@ -244,9 +244,10 @@ impl QuicParameters {
             .max_streams(StreamType::UniDi, self.max_streams_uni)
             .careful_resume(self.cr_saved_parameters())
             // TODO: max data seems large enough?
-            .max_stream_data(StreamType::BiDi, true, 12_000_000)
-            .max_stream_data(StreamType::BiDi, false, 12_000_000)
-            .max_stream_data(StreamType::UniDi, true, 12_000_000)
+            .max_stream_data(StreamType::BiDi, true, 200_000_000)
+            .max_stream_data(StreamType::BiDi, false, 200_000_000)
+            .max_stream_data(StreamType::UniDi, true, 200_000_000)
+            .mlkem(false)
             .idle_timeout(Duration::from_secs(self.idle_timeout))
             .cc_algorithm(self.congestion_control)
             .pacing(!self.no_pacing)
