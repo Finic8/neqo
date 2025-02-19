@@ -65,7 +65,11 @@ pub struct HystartPP {
 
 impl Display for HystartPP {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Hystart++ {}", self.state)
+        if self.enabled {
+            write!(f, "Hystart++ {}", self.state)
+        } else {
+            write!(f, "Hystart++ disabled")
+        }
     }
 }
 
@@ -186,12 +190,17 @@ impl HystartPP {
     }
 
     pub fn on_congestion(&mut self) {
+        if !self.enabled {
+            return;
+        }
         qerror!("[{self}] going to CA");
         self.state = State::CongestionAvoidance;
     }
 
     pub fn cwnd_increase(&self, increase: usize, max_datagram_size: usize) -> usize {
-        const L: usize = 1;
+        if !self.enabled {
+            return increase;
+        }
 
         match self.state {
             State::CSS { .. } => {
