@@ -42,6 +42,7 @@ pub struct Pacer {
     mtu: usize,
 
     last_packet_size: Option<usize>,
+    last_cwnd: usize,
 }
 
 impl Pacer {
@@ -65,6 +66,7 @@ impl Pacer {
             used: 0,
             mtu,
             last_packet_size: None,
+            last_cwnd: 0,
         }
     }
 
@@ -124,6 +126,11 @@ impl Pacer {
             self.last_packet_size = None;
         }
 
+        if self.last_cwnd < cwnd {
+            qinfo!("[{self}] cwnd increased resetting");
+            self.next_time = now;
+        }
+
         self.used += bytes;
 
         let same_size = self.last_packet_size.map_or(true, |last| last == bytes);
@@ -148,6 +155,8 @@ impl Pacer {
                 self.next_time.saturating_duration_since(now)
             );
         }
+
+        self.last_cwnd = cwnd;
     }
 }
 
