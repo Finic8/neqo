@@ -32,6 +32,7 @@ use neqo_crypto::{
 use neqo_transport::{Output, RandomConnectionIdGenerator, Version};
 use neqo_udp::RecvBuf;
 use tokio::time::Sleep;
+use tokio_timerfd::Delay;
 
 use crate::SharedArgs;
 
@@ -204,7 +205,7 @@ pub trait HttpServer: Display {
 pub struct ServerRunner {
     now: Box<dyn Fn() -> Instant>,
     server: Box<dyn HttpServer>,
-    timeout: Option<Pin<Box<Sleep>>>,
+    timeout: Option<Pin<Box<Delay>>>,
     sockets: Vec<(SocketAddr, crate::udp::Socket)>,
     recv_buf: RecvBuf,
 }
@@ -242,7 +243,7 @@ impl ServerRunner {
     // `ServerRunner::recv_buf`.
     async fn process_inner(
         server: &mut Box<dyn HttpServer>,
-        timeout: &mut Option<Pin<Box<Sleep>>>,
+        timeout: &mut Option<Pin<Box<Delay>>>,
         sockets: &mut [(SocketAddr, crate::udp::Socket)],
         now: &dyn Fn() -> Instant,
         mut input_dgram: Option<Datagram<&mut [u8]>>,
@@ -255,8 +256,8 @@ impl ServerRunner {
                     socket.send(&dgram)?;
                 }
                 Output::Callback(new_timeout) => {
-                    qdebug!("Setting timeout of {new_timeout:?}");
-                    *timeout = Some(Box::pin(tokio::time::sleep(new_timeout)));
+                    qwarn!("Setting timeout of {new_timeout:?}");
+                    *timeout = Some(Box::pin(tokio_timerfd::sleep(new_timeout)));
                     break;
                 }
                 Output::None => break,
@@ -313,7 +314,7 @@ impl ServerRunner {
             .timeout
             .as_mut()
             .map_or_else(|| Either::Right(futures::future::pending()), Either::Left)
-            .map(|()| Ok(Ready::Timeout));
+            .map(|_| Ok(Ready::Timeout));
         select(sockets_ready, timeout_ready).await.factor_first().0
     }
 
@@ -325,12 +326,26 @@ impl ServerRunner {
             if self.server.has_events() {
                 continue;
             }
+            let before = Instant::now();
+            qwarn!("before: {:?}", before);
 
             match self.ready().await? {
                 Ready::Socket(sockets_index) => {
+                    let after = Instant::now();
+                    qwarn!(
+                        "socket after: {:?} -> {:?}",
+                        after,
+                        after.saturating_duration_since(before)
+                    );
                     self.read_and_process(sockets_index).await?;
                 }
                 Ready::Timeout => {
+                    let after = Instant::now();
+                    qwarn!(
+                        "timeout after: {:?} -> {:?}",
+                        after,
+                        after.saturating_duration_since(before)
+                    );
                     self.timeout = None;
                     self.process().await?;
                 }
