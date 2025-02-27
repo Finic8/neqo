@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use neqo_common::{qdebug, qinfo};
+use neqo_common::{qdebug, qerror, qinfo, qwarn};
 
 /// This value determines how much faster the pacer operates than the
 /// congestion window.
@@ -84,9 +84,6 @@ impl Pacer {
     /// This returns a time, which could be in the past (this object doesn't know what
     /// the current time is).
     pub fn next(&self, _rtt: Duration, _cwnd: usize) -> Instant {
-        if !self.enabled {
-            return self.last_update;
-        }
         self.next_time
     }
 
@@ -96,7 +93,7 @@ impl Pacer {
     /// window (`cwnd`), and the number of bytes that were sent (`count`).
     pub fn spend(&mut self, now: Instant, rtt: Duration, cwnd: usize, bytes: usize) {
         if !self.enabled {
-            self.last_update = now;
+            self.next_time = now;
             return;
         }
         let rate = ((8 * cwnd) as f64 / rtt.as_secs_f64()) / 1_000.0;
@@ -115,20 +112,30 @@ impl Pacer {
         .map(Duration::from_nanos)
         .unwrap_or(rtt);
 
-        let elapsed = now.saturating_duration_since(self.last_update);
+        let elapsed = now.saturating_duration_since(self.next_time);
         if elapsed > burst_duration {
-            qdebug!(
-                "[{self}] elapesd: {elapsed:?} > burst_duration {burst_duration:?} -> resetting"
-            );
-            self.used = 0;
+            /*
+                        qinfo!(
+                            "[{self}] elapesd: {elapsed:?} > burst_duration {burst_duration:?} -> resetting"
+                        );
+            */
+            self.used = bytes;
             self.last_update = now;
             self.next_time = now;
             self.last_packet_size = None;
+            return;
         }
 
-        if self.last_cwnd < cwnd {
-            qinfo!("[{self}] cwnd increased resetting");
-            self.next_time = now;
+        if self.last_cwnd < cwnd && self.used == 0 {
+            self.used = bytes;
+            self.next_time = if bytes == 0 {
+                now
+            } else {
+                self.last_update + burst_duration
+            };
+            self.last_update = now;
+            self.last_packet_size = None;
+            return;
         }
 
         self.used += bytes;
@@ -138,6 +145,20 @@ impl Pacer {
             self.last_packet_size = Some(bytes);
         }
 
+        qwarn!(
+            "[{self}] since last update {:?}",
+            now.saturating_duration_since(self.last_update)
+        );
+        qwarn!(
+            "[{self}] since next {:?}",
+            now.saturating_duration_since(self.next_time)
+        );
+
+        if self.last_cwnd < cwnd {
+            // qinfo!("[{self}] cwnd increased resetting");
+            self.next_time = now;
+            //self.last_update = now;
+        }
         if self.used >= self.capacity || !same_size {
             let delay = u64::try_from(
                 rtt.as_nanos().saturating_mul(self.used as u128)
@@ -146,9 +167,13 @@ impl Pacer {
             .map(Duration::from_nanos)
             .unwrap_or(rtt);
 
+            qinfo!("delay {:?}", delay);
+            //let delay = delay.saturating_sub(Duration::from_micros(1000));
+            //qinfo!("corrected {:?}", delay);
+
             self.used = 0;
-            self.next_time = self.last_update + delay;
-            self.last_update = now;
+            self.last_update = self.next_time;
+            self.next_time = self.next_time + delay;
             self.last_packet_size = None;
             qinfo!(
                 "[{self}] waiting for: {:?}",
