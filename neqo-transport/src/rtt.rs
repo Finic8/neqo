@@ -27,7 +27,7 @@ use crate::{
 /// `select()`, or similar) can reliably deliver; see `neqo_common::hrtime`.
 pub const GRANULARITY: Duration = Duration::from_millis(1);
 // Defined in -recovery 6.2 as 333ms but using lower value.
-pub const INITIAL_RTT: Duration = Duration::from_millis(100);
+pub const INITIAL_RTT: Duration = Duration::from_millis(1000);
 
 /// The source of the RTT measurement.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
