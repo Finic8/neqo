@@ -65,7 +65,6 @@ pub struct Resume {
     last_unvalidated_pkt: u64,
 
     saved: SavedParameters,
-    start: Option<Instant>,
 }
 
 impl From<&Resume> for CarefulResumeStateParameters {
@@ -110,7 +109,6 @@ impl Resume {
             first_unvalidated_pkt: 0,
             last_unvalidated_pkt: 0,
             saved,
-            start: Some(Instant::now()),
         }
     }
 
@@ -234,7 +232,6 @@ impl Resume {
         rtt: Duration,
         flightsize: usize,
         app_limited: bool,
-        initial_cwnd: usize,
         now: Instant,
     ) -> Option<usize> {
         if !self.enabled {
@@ -261,16 +258,6 @@ impl Resume {
 
                 qdebug!("Sending qlog");
                 self.qlog.add_event_data_with_instant(|| Some(event), now);
-                None
-            }
-            State::Reconnaissance { acked_bytes } if acked_bytes < initial_cwnd => {
-                qinfo!(
-                    "!!! CWND @ {:?} {}/ {} initial: {}",
-                    now.saturating_duration_since(self.start.unwrap_or(now)),
-                    acked_bytes,
-                    cwnd,
-                    initial_cwnd
-                );
                 None
             }
             State::Jumping => {
