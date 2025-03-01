@@ -71,7 +71,7 @@ pub struct Resume {
     pipesize: usize,
     first_unvalidated_pkt: u64,
     last_unvalidated_pkt: u64,
-    ssthresh: None,
+    ssthresh: Option<usize>,
 
     saved: SavedParameters,
 }
@@ -92,7 +92,7 @@ impl From<&Resume> for CarefulResumeStateParameters {
             first_unvalidated_packet: value.first_unvalidated_pkt,
             last_unvalidated_packet: value.last_unvalidated_pkt,
             congestion_window: Some(value.cwnd as u64),
-            ssthresh: value.ssthresh,
+            ssthresh: value.ssthresh.map(|sst| sst as u64),
         }
     }
 }
@@ -103,7 +103,7 @@ impl From<&mut Resume> for CarefulResumeStateParameters {
             first_unvalidated_packet: value.first_unvalidated_pkt,
             last_unvalidated_packet: value.last_unvalidated_pkt,
             congestion_window: Some(value.cwnd as u64),
-            ssthresh: None,
+            ssthresh: value.ssthresh.map(|sst| sst as u64),
         }
     }
 }
