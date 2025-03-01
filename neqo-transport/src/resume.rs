@@ -172,6 +172,21 @@ impl Resume {
         Some(jump_cwnd)
     }
 
+    fn maybe_rtt_exceeded(
+        &mut self,
+        start: Instant,
+        now: Instant,
+        rtt: Duration,
+        flightsize: usize,
+    ) -> Option<usize> {
+        if now.saturating_duration_since(start) < rtt {
+            return None;
+        }
+        qerror!("[{self}] rtt exceeded, going to validating");
+        self.change_state(State::Validating, CarefulResumeTrigger::RttExceeded, now);
+        Some(flightsize)
+    }
+
     pub fn on_ack(
         &mut self,
         ack: &SentPacket,
@@ -196,10 +211,8 @@ impl Resume {
             State::Unvalidated { start } => {
                 self.pipesize += ack.len();
 
-                if now.saturating_duration_since(start) >= rtt {
-                    qerror!("[{self}] rtt exceeded, going to validating");
-                    self.change_state(State::Validating, CarefulResumeTrigger::RttExceeded, now);
-                    return (Some(flightsize), None);
+                if let Some(next_cwnd) = self.maybe_rtt_exceeded(start, now, rtt, flightsize) {
+                    return (Some(next_cwnd), None);
                 }
 
                 if ack.pn() < self.first_unvalidated_pkt {
@@ -293,13 +306,7 @@ impl Resume {
             }
             State::Unvalidated { start } => {
                 self.last_unvalidated_pkt = largest_pkt_sent;
-                if now.saturating_duration_since(start) >= rtt {
-                    qerror!("[{self}] rtt exceeded, going to validating");
-                    self.change_state(State::Validating, CarefulResumeTrigger::RttExceeded, now);
-                    return Some(flightsize);
-                }
-
-                None
+                self.maybe_rtt_exceeded(start, now, rtt, flightsize)
             }
             _ => None,
         }
