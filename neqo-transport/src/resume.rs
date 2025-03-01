@@ -187,6 +187,22 @@ impl Resume {
         Some(flightsize)
     }
 
+    fn enter_validating(&mut self, flightsize: usize, now: Instant) -> usize {
+        if self.pipesize < flightsize {
+            qerror!("[{self}] next stage validating");
+            self.change_state(
+                State::Validating,
+                CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
+                now,
+            );
+            flightsize
+        } else {
+            qerror!("[{self}] rate limited, skipping validating");
+            self.change_state(State::Normal, CarefulResumeTrigger::RateLimited, now);
+            self.pipesize
+        }
+    }
+
     pub fn on_ack(
         &mut self,
         ack: &SentPacket,
@@ -219,19 +235,7 @@ impl Resume {
                     return (None, None);
                 }
 
-                if self.pipesize < flightsize {
-                    qerror!("[{self}] next stage validating");
-                    self.change_state(
-                        State::Validating,
-                        CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
-                        now,
-                    );
-                    (Some(flightsize), None)
-                } else {
-                    qerror!("[{self}] rate limited, skipping validating");
-                    self.change_state(State::Normal, CarefulResumeTrigger::RateLimited, now);
-                    (Some(self.pipesize), None)
-                }
+                (Some(self.enter_validating(flightsize, now)), None)
             }
             State::Validating => {
                 self.pipesize += ack.len();
