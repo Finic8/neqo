@@ -2,7 +2,10 @@ use std::time::{Duration, Instant};
 
 use neqo_common::{qdebug, qerror, qinfo, qlog::NeqoQlog};
 use qlog::events::{
-    resume::{CarefulResumePhase, CarefulResumeRestoredParameters, CarefulResumeTrigger},
+    resume::{
+        CarefulResumePhase, CarefulResumeRestoredParameters, CarefulResumeStateParameters,
+        CarefulResumeTrigger,
+    },
     EventData,
 };
 
@@ -61,6 +64,29 @@ pub struct Resume {
 
     saved: SavedParameters,
     start: Option<Instant>,
+}
+
+impl From<&Resume> for CarefulResumeStateParameters {
+    fn from(value: &Resume) -> Self {
+        Self {
+            pipesize: value.pipesize as u64,
+            first_unvalidated_packet: value.first_unvalidated_pkt,
+            last_unvalidated_packet: value.last_unvalidated_pkt,
+            congestion_window: Some(value.cwnd as u64),
+            ssthresh: None,
+        }
+    }
+}
+impl From<&mut Resume> for CarefulResumeStateParameters {
+    fn from(value: &mut Resume) -> Self {
+        Self {
+            pipesize: value.pipesize as u64,
+            first_unvalidated_packet: value.first_unvalidated_pkt,
+            last_unvalidated_packet: value.last_unvalidated_pkt,
+            congestion_window: Some(value.cwnd as u64),
+            ssthresh: None,
+        }
+    }
 }
 
 impl Resume {
@@ -210,13 +236,7 @@ impl Resume {
                     qlog::events::resume::CarefulResumePhaseUpdated {
                         old_phase: None,
                         new_phase: self.state.into(),
-                        state_data: qlog::events::resume::CarefulResumeStateParameters {
-                            pipesize: self.pipesize as u64,
-                            first_unvalidated_packet: 0,
-                            last_unvalidated_packet: 0,
-                            congestion_window: Some(self.cwnd as u64),
-                            ssthresh: Some(u64::MAX),
-                        },
+                        state_data: self.into(),
                         restored_data: Some(self.saved.into()),
                         trigger: None,
                     },
@@ -278,13 +298,7 @@ impl Resume {
             EventData::CarefulResumePhaseUpdated(qlog::events::resume::CarefulResumePhaseUpdated {
                 old_phase: Some(self.state.into()),
                 new_phase: next_state.into(),
-                state_data: qlog::events::resume::CarefulResumeStateParameters {
-                    pipesize: self.pipesize as u64,
-                    first_unvalidated_packet: self.first_unvalidated_pkt,
-                    last_unvalidated_packet: self.last_unvalidated_pkt,
-                    congestion_window: Some(self.cwnd as u64),
-                    ssthresh: Some(u64::MAX),
-                },
+                state_data: self.into(),
                 restored_data: Some(self.saved.into()),
                 trigger: Some(trigger),
             });
