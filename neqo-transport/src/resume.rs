@@ -1,7 +1,4 @@
-use std::{
-    time::{Duration, Instant},
-    u64,
-};
+use std::time::{Duration, Instant};
 
 use neqo_common::{qdebug, qerror, qinfo, qlog::NeqoQlog};
 use qlog::events::{
@@ -21,10 +18,10 @@ pub enum State {
     /// However the first unvalidated packet is not sent yet,
     /// therefore the packet number is not yet available
     Jumping,
-    Unvalidated(u64),
-    Validating(u64),
+    Unvalidated,
+    Validating,
     // Stores the last packet sent during the Unvalidated Phase
-    SafeRetreat(u64),
+    SafeRetreat,
     Normal,
 }
 
@@ -56,11 +53,11 @@ pub struct Resume {
     enabled: bool,
 
     state: State,
-    enable_safe_retreat: bool,
 
     cwnd: usize,
     pipesize: usize,
-    largest_pkt_sent: u64,
+    first_unvalidated_pkt: u64,
+    last_unvalidated_pkt: u64,
 
     saved: SavedParameters,
     start: Option<Instant>,
@@ -80,10 +77,10 @@ impl Resume {
             qlog: NeqoQlog::disabled(),
             enabled: saved.enabled,
             state: State::default(),
-            enable_safe_retreat: true,
             cwnd: 0,
             pipesize: 0,
-            largest_pkt_sent: 0,
+            first_unvalidated_pkt: 0,
+            last_unvalidated_pkt: 0,
             saved,
             start: Some(Instant::now()),
         }
@@ -151,34 +148,30 @@ impl Resume {
 
                 (self.maybe_jump(rtt, initial_cwnd, now), None)
             }
-            State::Unvalidated(first_unvalidated_packet) => {
+            State::Unvalidated => {
                 self.pipesize += ack.len();
-                if ack.pn() < first_unvalidated_packet {
+                if ack.pn() < self.first_unvalidated_pkt {
                     return (None, None);
                 }
 
                 if self.pipesize < flightsize {
                     qerror!("CAREFULERESUME: next stage validating");
                     self.change_state(
-                        State::Validating(self.largest_pkt_sent),
+                        State::Validating,
                         CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
                         now,
                     );
                     (Some(flightsize), None)
                 } else {
                     qerror!("CAREFULERESUME: complete skipping validating");
-                    self.change_state(
-                        State::Normal,
-                        CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
-                        now,
-                    );
+                    self.change_state(State::Normal, CarefulResumeTrigger::RateLimited, now);
                     (Some(self.pipesize), None)
                 }
             }
-            State::Validating(last_unvalidated_packet) => {
+            State::Validating => {
                 self.pipesize += ack.len();
 
-                if last_unvalidated_packet <= ack.pn() {
+                if self.last_unvalidated_pkt <= ack.pn() {
                     qerror!("CAREFULERESUME: complete going to normal");
                     self.change_state(
                         State::Normal,
@@ -188,7 +181,7 @@ impl Resume {
                 }
                 (None, None)
             }
-            State::SafeRetreat(_) => todo!(),
+            State::SafeRetreat => todo!(),
             _ => (None, None),
         }
     }
@@ -206,7 +199,6 @@ impl Resume {
         }
 
         self.cwnd = cwnd;
-        self.largest_pkt_sent = largest_pkt_sent;
 
         if app_limited {
             return None;
@@ -245,38 +237,34 @@ impl Resume {
                 None
             }
             State::Jumping => {
+                self.first_unvalidated_pkt = largest_pkt_sent;
                 self.change_state(
-                    State::Unvalidated(self.largest_pkt_sent),
-                    CarefulResumeTrigger::CongestionWindowLimited, // TODO: right trigger??
+                    State::Unvalidated,
+                    CarefulResumeTrigger::CongestionWindowLimited,
                     now,
                 );
+                None
+            }
+            State::Unvalidated => {
+                self.last_unvalidated_pkt = largest_pkt_sent;
                 None
             }
             _ => None,
         }
     }
 
-    pub fn on_congestion(&mut self, largest_pkt_sent: u64, now: Instant) -> Option<usize> {
+    pub fn on_congestion(&mut self, _largest_pkt_sent: u64, now: Instant) -> Option<usize> {
         if !self.enabled {
             return None;
         }
         // TODO: mark CR parameters as invalid
         qerror!("CAREFULERESUME: on_congestion");
         match self.state {
-            State::Unvalidated(_) if self.enable_safe_retreat => {
-                self.change_state(
-                    State::SafeRetreat(largest_pkt_sent),
-                    CarefulResumeTrigger::PacketLoss,
-                    now,
-                );
+            State::Unvalidated => {
+                self.change_state(State::SafeRetreat, CarefulResumeTrigger::PacketLoss, now);
                 Some(self.pipesize / 2)
             }
-            State::Unvalidated(p) if self.enable_safe_retreat => {
-                // TODO: how is this different from unvalidated?
-                self.change_state(State::SafeRetreat(p), CarefulResumeTrigger::PacketLoss, now);
-                Some(self.pipesize / 2)
-            }
-            State::Unvalidated(_) | State::Validating(_) | State::Reconnaissance { .. } => {
+            State::Validating | State::Reconnaissance { .. } => {
                 qerror!("CAREFULERESUME: packetloss");
                 // self.change_state(ResumeState::Normal, CarefulResumeTrigger::PacketLoss, now);
                 None
@@ -292,8 +280,8 @@ impl Resume {
                 new_phase: next_state.into(),
                 state_data: qlog::events::resume::CarefulResumeStateParameters {
                     pipesize: self.pipesize as u64,
-                    first_unvalidated_packet: 0,
-                    last_unvalidated_packet: 0,
+                    first_unvalidated_packet: self.first_unvalidated_pkt,
+                    last_unvalidated_packet: self.last_unvalidated_pkt,
                     congestion_window: Some(self.cwnd as u64),
                     ssthresh: Some(u64::MAX),
                 },
@@ -312,9 +300,9 @@ impl From<State> for CarefulResumePhase {
     fn from(value: State) -> Self {
         match value {
             State::Reconnaissance { .. } | State::Jumping => Self::Reconnaissance,
-            State::Unvalidated(_) => Self::Unvalidated,
-            State::Validating(_) => Self::Validating,
-            State::SafeRetreat(_) => Self::SafeRetreat,
+            State::Unvalidated => Self::Unvalidated,
+            State::Validating => Self::Validating,
+            State::SafeRetreat => Self::SafeRetreat,
             State::Normal => Self::Normal,
         }
     }
