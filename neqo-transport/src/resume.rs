@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    fmt::{write, Display},
+    time::{Duration, Instant},
+};
 
 use neqo_common::{qdebug, qerror, qinfo, qlog::NeqoQlog};
 use qlog::events::{
@@ -42,6 +45,11 @@ pub struct SavedParameters {
     pub cwnd: usize,
     pub enabled: bool,
 }
+impl Display for SavedParameters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "rtt: {:?}, cwnd: {}", self.rtt, self.cwnd)
+    }
+}
 
 impl From<SavedParameters> for CarefulResumeRestoredParameters {
     fn from(val: SavedParameters) -> Self {
@@ -65,6 +73,15 @@ pub struct Resume {
     last_unvalidated_pkt: u64,
 
     saved: SavedParameters,
+}
+
+impl Display for Resume {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.enabled {
+            return write!(f, "CarefulResume disabled");
+        }
+        write!(f, "CarefulResume[{}] @ {:?}", self.saved, self.state)
+    }
 }
 
 impl From<&Resume> for CarefulResumeStateParameters {
@@ -127,7 +144,7 @@ impl Resume {
         let jump_cwnd = self.saved.cwnd / 2;
 
         if jump_cwnd <= self.cwnd {
-            qerror!("CAREFULERESUME: abort cr: jump smaller than cwnd");
+            qerror!("[{self}] abort: jump smaller than cwnd");
             self.change_state(
                 State::Normal,
                 CarefulResumeTrigger::CongestionWindowLimited,
@@ -138,7 +155,7 @@ impl Resume {
 
         if rtt <= self.saved.rtt / 2 || self.saved.rtt * 10 <= rtt {
             qerror!(
-                "CAREFULERESUME: Abort cr: current RTT too divergent from previous RTT rtt_sample={:?} previous_rtt={:?}",
+                "[{self}] abort: current RTT too divergent from previous RTT rtt_sample={:?} previous_rtt={:?}",
                 rtt,
                 self.saved.rtt
             );
@@ -146,7 +163,7 @@ impl Resume {
             return None;
         }
 
-        qerror!("CAREFULERESUME: cr: going to unvalidated");
+        qerror!("[{self}] going to unvalidated");
         self.pipesize = self.cwnd;
         self.cwnd = jump_cwnd;
         self.state = State::Jumping;
@@ -178,6 +195,7 @@ impl Resume {
                 self.pipesize += ack.len();
 
                 if now.saturating_duration_since(start) >= rtt {
+                    qerror!("[{self}] rtt exceeded, going to validating");
                     self.change_state(State::Validating, CarefulResumeTrigger::RttExceeded, now);
                     return (Some(flightsize), None);
                 }
@@ -187,7 +205,7 @@ impl Resume {
                 }
 
                 if self.pipesize < flightsize {
-                    qerror!("CAREFULERESUME: next stage validating");
+                    qerror!("[{self}] next stage validating");
                     self.change_state(
                         State::Validating,
                         CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
@@ -195,7 +213,7 @@ impl Resume {
                     );
                     (Some(flightsize), None)
                 } else {
-                    qerror!("CAREFULERESUME: complete skipping validating");
+                    qerror!("[{self}] rate limited, skipping validating");
                     self.change_state(State::Normal, CarefulResumeTrigger::RateLimited, now);
                     (Some(self.pipesize), None)
                 }
@@ -204,7 +222,7 @@ impl Resume {
                 self.pipesize += ack.len();
 
                 if self.last_unvalidated_pkt <= ack.pn() {
-                    qerror!("CAREFULERESUME: complete going to normal");
+                    qerror!("[{self}] complete going to normal");
                     self.change_state(
                         State::Normal,
                         CarefulResumeTrigger::LastUnvalidatedPacketAcknowledged,
@@ -218,6 +236,7 @@ impl Resume {
                 if ack.pn() < self.last_unvalidated_pkt {
                     return (None, None);
                 }
+                qerror!("[{self}] safe retreat complete");
                 self.change_state(State::Normal, CarefulResumeTrigger::ExitRecovery, now);
                 (None, Some(self.pipesize))
             }
@@ -272,6 +291,7 @@ impl Resume {
             State::Unvalidated { start } => {
                 self.last_unvalidated_pkt = largest_pkt_sent;
                 if now.saturating_duration_since(start) >= rtt {
+                    qerror!("[{self}] rtt exceeded, going to validating");
                     self.change_state(State::Validating, CarefulResumeTrigger::RttExceeded, now);
                     return Some(flightsize);
                 }
@@ -294,7 +314,7 @@ impl Resume {
         if !self.enabled {
             return None;
         }
-        qerror!("CAREFULERESUME: on_congestion");
+        qerror!("[{self}] on_congestion");
         match self.state {
             State::Unvalidated { .. } | State::Validating => {
                 // TODO: mark CR parameters as invalid
