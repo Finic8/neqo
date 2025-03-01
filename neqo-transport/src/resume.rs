@@ -21,7 +21,9 @@ pub enum State {
     /// However the first unvalidated packet is not sent yet,
     /// therefore the packet number is not yet available
     Jumping,
-    Unvalidated,
+    Unvalidated {
+        start: Instant,
+    },
     Validating,
     // Stores the last packet sent during the Unvalidated Phase
     SafeRetreat,
@@ -174,8 +176,14 @@ impl Resume {
 
                 (self.maybe_jump(rtt, initial_cwnd, now), None)
             }
-            State::Unvalidated => {
+            State::Unvalidated { start } => {
                 self.pipesize += ack.len();
+
+                if now.saturating_duration_since(start) >= rtt {
+                    self.change_state(State::Validating, CarefulResumeTrigger::RttExceeded, now);
+                    return (Some(flightsize), None);
+                }
+
                 if ack.pn() < self.first_unvalidated_pkt {
                     return (None, None);
                 }
@@ -216,6 +224,8 @@ impl Resume {
         &mut self,
         cwnd: usize,
         largest_pkt_sent: u64,
+        rtt: Duration,
+        flightsize: usize,
         app_limited: bool,
         initial_cwnd: usize,
         now: Instant,
@@ -259,14 +269,19 @@ impl Resume {
             State::Jumping => {
                 self.first_unvalidated_pkt = largest_pkt_sent;
                 self.change_state(
-                    State::Unvalidated,
+                    State::Unvalidated { start: now },
                     CarefulResumeTrigger::CongestionWindowLimited,
                     now,
                 );
                 None
             }
-            State::Unvalidated => {
+            State::Unvalidated { start } => {
                 self.last_unvalidated_pkt = largest_pkt_sent;
+                if now.saturating_duration_since(start) >= rtt {
+                    self.change_state(State::Validating, CarefulResumeTrigger::RttExceeded, now);
+                    return Some(flightsize);
+                }
+
                 None
             }
             _ => None,
@@ -280,7 +295,7 @@ impl Resume {
         // TODO: mark CR parameters as invalid
         qerror!("CAREFULERESUME: on_congestion");
         match self.state {
-            State::Unvalidated => {
+            State::Unvalidated { .. } => {
                 self.change_state(State::SafeRetreat, CarefulResumeTrigger::PacketLoss, now);
                 Some(self.pipesize / 2)
             }
@@ -314,7 +329,7 @@ impl From<State> for CarefulResumePhase {
     fn from(value: State) -> Self {
         match value {
             State::Reconnaissance { .. } | State::Jumping => Self::Reconnaissance,
-            State::Unvalidated => Self::Unvalidated,
+            State::Unvalidated { .. } => Self::Unvalidated,
             State::Validating => Self::Validating,
             State::SafeRetreat => Self::SafeRetreat,
             State::Normal => Self::Normal,

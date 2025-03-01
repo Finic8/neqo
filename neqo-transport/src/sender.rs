@@ -207,10 +207,15 @@ impl PacketSender {
         self.cc.on_packet_sent(pkt, now);
 
         // FIXME: quiche has rtt as Optional, maybe need to extra checks to validate
-        if let Some(jump) =
-            self.resume
-                .on_sent(self.cc.cwnd(), pkt.pn(), false, self.cc.cwnd_initial(), now)
-        {
+        if let Some(jump) = self.resume.on_sent(
+            self.cc.cwnd(),
+            pkt.pn(),
+            rtt,
+            self.cc.bytes_in_flight(),
+            false,
+            self.cc.cwnd_initial(),
+            now,
+        ) {
             self.cc.set_cwnd(jump, now);
         }
     }
