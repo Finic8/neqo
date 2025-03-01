@@ -189,6 +189,9 @@ impl Resume {
 
     fn enter_validating(&mut self, flightsize: usize, now: Instant) -> usize {
         if self.pipesize < flightsize {
+            // On entry to the Validating Phase (when flight_size is greater
+            // than the PipeSize), the CWND is set to the flight_size.
+
             qerror!("[{self}] next stage validating");
             self.change_state(
                 State::Validating,
@@ -197,6 +200,10 @@ impl Resume {
             );
             flightsize
         } else {
+            // On entry to the Validating Phase, if the flight_size is less than or equal to the PipeSize,
+            // the Normal Phase is entered with the CWND reset to the PipeSize.
+            // (The PipeSize does not include the part of the jump_cwnd that was not utilised.)
+
             qerror!("[{self}] rate limited, skipping validating");
             self.change_state(State::Normal, CarefulResumeTrigger::RateLimited, now);
             self.pipesize
@@ -225,17 +232,18 @@ impl Resume {
                 (self.maybe_jump(rtt, initial_cwnd, now), None)
             }
             State::Unvalidated { start } => {
+                // The variable PipeSize is increased by the volume of data acknowledged by each received ACK.
+                // (This indicates a previously unvalidated packet has been successfully sent over the path.)
                 self.pipesize += ack.len();
 
-                if let Some(next_cwnd) = self.maybe_rtt_exceeded(start, now, rtt, flightsize) {
-                    return (Some(next_cwnd), None);
+                // The sender enters the Validating Phase when an acknowledgement is received
+                // for the first packet number (or higher) that was sent in the Unvalidated Phase
+                if self.first_unvalidated_pkt <= ack.pn() {
+                    return (Some(self.enter_validating(flightsize, now)), None);
                 }
 
-                if ack.pn() < self.first_unvalidated_pkt {
-                    return (None, None);
-                }
-
-                (Some(self.enter_validating(flightsize, now)), None)
+                // A sender enters the Validating Phase if more than one RTT has elapsed while in the Unvalidated Phase
+                (self.maybe_rtt_exceeded(start, now, rtt, flightsize), None)
             }
             State::Validating => {
                 self.pipesize += ack.len();
@@ -310,6 +318,11 @@ impl Resume {
             }
             State::Unvalidated { start } => {
                 self.last_unvalidated_pkt = largest_pkt_sent;
+                if flightsize >= cwnd {
+                    // The sender enters the Validating Phase when the flight_size equals the CWND.
+                    return Some(self.enter_validating(flightsize, now));
+                }
+                // A sender enters the Validating Phase if more than one RTT has elapsed while in the Unvalidated Phase
                 self.maybe_rtt_exceeded(start, now, rtt, flightsize)
             }
             _ => None,
