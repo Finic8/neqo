@@ -215,7 +215,14 @@ impl Resume {
                 }
                 (None, None)
             }
-            State::SafeRetreat => todo!(),
+            State::SafeRetreat => {
+                self.pipesize += ack.len();
+                if ack.pn() < self.last_unvalidated_pkt {
+                    return (None, None);
+                }
+                self.change_state(State::Normal, CarefulResumeTrigger::ExitRecovery, now);
+                (None, Some(self.pipesize))
+            }
             _ => (None, None),
         }
     }
@@ -288,20 +295,27 @@ impl Resume {
         }
     }
 
-    pub fn on_congestion(&mut self, _largest_pkt_sent: u64, now: Instant) -> Option<usize> {
+    pub fn on_ecn(&mut self, now: Instant) -> Option<usize> {
+        self.on_congestion(CarefulResumeTrigger::EcnCe, now)
+    }
+
+    pub fn on_packetloss(&mut self, now: Instant) -> Option<usize> {
+        self.on_congestion(CarefulResumeTrigger::PacketLoss, now)
+    }
+
+    fn on_congestion(&mut self, trigger: CarefulResumeTrigger, now: Instant) -> Option<usize> {
         if !self.enabled {
             return None;
         }
-        // TODO: mark CR parameters as invalid
         qerror!("CAREFULERESUME: on_congestion");
         match self.state {
-            State::Unvalidated { .. } => {
-                self.change_state(State::SafeRetreat, CarefulResumeTrigger::PacketLoss, now);
+            State::Unvalidated { .. } | State::Validating => {
+                // TODO: mark CR parameters as invalid
+                self.change_state(State::SafeRetreat, trigger, now);
                 Some(self.pipesize / 2)
             }
-            State::Validating | State::Reconnaissance { .. } => {
-                qerror!("CAREFULERESUME: packetloss");
-                // self.change_state(ResumeState::Normal, CarefulResumeTrigger::PacketLoss, now);
+            State::Reconnaissance { .. } => {
+                self.change_state(State::Normal, trigger, now);
                 None
             }
             _ => None,

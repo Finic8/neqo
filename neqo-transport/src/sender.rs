@@ -162,8 +162,7 @@ impl PacketSender {
         );
 
         if ret {
-            // TODO: right packet number?
-            if let Some(next_cwnd) = self.resume.on_congestion(0, now) {
+            if let Some(next_cwnd) = self.resume.on_packetloss(now) {
                 qdebug!("resume reduced cwnd to {next_cwnd}");
                 self.cc.set_cwnd(next_cwnd, now);
             }
@@ -178,8 +177,7 @@ impl PacketSender {
 
     /// Called when ECN CE mark received.  Returns true if the congestion window was reduced.
     pub fn on_ecn_ce_received(&mut self, largest_acked_pkt: &SentPacket, now: Instant) -> bool {
-        // FIXME: is quiche wants largest sent packet
-        if let Some(next_cwnd) = self.resume.on_congestion(largest_acked_pkt.pn(), now) {
+        if let Some(next_cwnd) = self.resume.on_ecn(now) {
             qdebug!("resume reduced cwnd to {next_cwnd}");
             self.cc.set_cwnd(next_cwnd, now);
         }
