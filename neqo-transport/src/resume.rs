@@ -71,6 +71,7 @@ pub struct Resume {
     pipesize: usize,
     first_unvalidated_pkt: u64,
     last_unvalidated_pkt: u64,
+    ssthresh: None,
 
     saved: SavedParameters,
 }
@@ -91,7 +92,7 @@ impl From<&Resume> for CarefulResumeStateParameters {
             first_unvalidated_packet: value.first_unvalidated_pkt,
             last_unvalidated_packet: value.last_unvalidated_pkt,
             congestion_window: Some(value.cwnd as u64),
-            ssthresh: None,
+            ssthresh: value.ssthresh,
         }
     }
 }
@@ -125,6 +126,7 @@ impl Resume {
             pipesize: 0,
             first_unvalidated_pkt: 0,
             last_unvalidated_pkt: 0,
+            ssthresh: None,
             saved,
         }
     }
@@ -237,8 +239,9 @@ impl Resume {
                     return (None, None);
                 }
                 qerror!("[{self}] safe retreat complete");
+                self.ssthresh = Some(self.pipesize);
                 self.change_state(State::Normal, CarefulResumeTrigger::ExitRecovery, now);
-                (None, Some(self.pipesize))
+                (None, self.ssthresh)
             }
             _ => (None, None),
         }
