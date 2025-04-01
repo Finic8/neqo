@@ -172,37 +172,25 @@ impl Resume {
         Some(jump_cwnd)
     }
 
-    fn maybe_rtt_exceeded(
-        &mut self,
-        start: Instant,
-        now: Instant,
-        rtt: Duration,
-        flightsize: usize,
-    ) -> Option<usize> {
+    fn rtt_exceeded(&mut self, start: Instant, now: Instant, rtt: Duration) -> bool {
         if now.saturating_duration_since(start) < rtt {
-            return None;
+            return false;
         }
         qerror!("[{self}] rtt exceeded, going to validating");
         self.change_state(State::Validating, CarefulResumeTrigger::RttExceeded, now);
-        Some(flightsize)
+        true
     }
 
     fn enter_validating(&mut self, flightsize: usize, now: Instant) -> usize {
         if self.pipesize < flightsize {
             // On entry to the Validating Phase (when flight_size is greater
             // than the PipeSize), the CWND is set to the flight_size.
-
-            qerror!("[{self}] next stage validating");
-            self.change_state(
-                State::Validating,
-                CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
-                now,
-            );
             flightsize
         } else {
-            // On entry to the Validating Phase, if the flight_size is less than or equal to the PipeSize,
-            // the Normal Phase is entered with the CWND reset to the PipeSize.
-            // (The PipeSize does not include the part of the jump_cwnd that was not utilised.)
+            // On entry to the Validating Phase, if the flight_size is less than or equal to the
+            // PipeSize, the Normal Phase is entered with the CWND reset to the
+            // PipeSize. (The PipeSize does not include the part of the jump_cwnd that
+            // was not utilised.)
 
             qerror!("[{self}] rate limited, skipping validating");
             self.change_state(State::Normal, CarefulResumeTrigger::RateLimited, now);
@@ -232,18 +220,31 @@ impl Resume {
                 (self.maybe_jump(rtt, initial_cwnd, now), None)
             }
             State::Unvalidated { start } => {
-                // The variable PipeSize is increased by the volume of data acknowledged by each received ACK.
-                // (This indicates a previously unvalidated packet has been successfully sent over the path.)
+                // The variable PipeSize is increased by the volume of data acknowledged by each
+                // received ACK. (This indicates a previously unvalidated packet has
+                // been successfully sent over the path.)
                 self.pipesize += ack.len();
 
-                // The sender enters the Validating Phase when an acknowledgement is received
-                // for the first packet number (or higher) that was sent in the Unvalidated Phase
-                if self.first_unvalidated_pkt <= ack.pn() {
-                    return (Some(self.enter_validating(flightsize, now)), None);
-                }
+                let enter_validating = if self.first_unvalidated_pkt <= ack.pn() {
+                    // The sender enters the Validating Phase when an acknowledgement is received
+                    // for the first packet number (or higher) that was sent in the Unvalidated
+                    // Phase
+                    qerror!("[{self}] next stage validating");
+                    self.change_state(
+                        State::Validating,
+                        CarefulResumeTrigger::FirstUnvalidatedPacketAcknowledged,
+                        now,
+                    );
+                    true
+                } else {
+                    self.rtt_exceeded(start, now, rtt)
+                };
 
-                // A sender enters the Validating Phase if more than one RTT has elapsed while in the Unvalidated Phase
-                (self.maybe_rtt_exceeded(start, now, rtt, flightsize), None)
+                if enter_validating {
+                    (Some(self.enter_validating(flightsize, now)), None)
+                } else {
+                    (None, None)
+                }
             }
             State::Validating => {
                 self.pipesize += ack.len();
@@ -295,8 +296,8 @@ impl Resume {
             State::Reconnaissance { .. } if largest_pkt_sent == 0 => {
                 let event = EventData::CarefulResumePhaseUpdated(
                     qlog::events::resume::CarefulResumePhaseUpdated {
-                        old_phase: None,
-                        new_phase: self.state.into(),
+                        old: None,
+                        new: self.state.into(),
                         state_data: self.into(),
                         restored_data: Some(self.saved.into()),
                         trigger: None,
@@ -318,12 +319,21 @@ impl Resume {
             }
             State::Unvalidated { start } => {
                 self.last_unvalidated_pkt = largest_pkt_sent;
-                if flightsize >= cwnd {
+                let enter_validating = if flightsize >= cwnd {
                     // The sender enters the Validating Phase when the flight_size equals the CWND.
-                    return Some(self.enter_validating(flightsize, now));
-                }
-                // A sender enters the Validating Phase if more than one RTT has elapsed while in the Unvalidated Phase
-                self.maybe_rtt_exceeded(start, now, rtt, flightsize)
+                    self.change_state(
+                        State::Validating,
+                        CarefulResumeTrigger::LastUnvalidatedPacketSent,
+                        now,
+                    );
+                    true
+                } else {
+                    // A sender enters the Validating Phase if more than one RTT has elapsed while
+                    // in the Unvalidated Phase
+                    self.rtt_exceeded(start, now, rtt)
+                };
+
+                enter_validating.then(|| self.enter_validating(flightsize, now))
             }
             _ => None,
         }
@@ -359,8 +369,8 @@ impl Resume {
     fn change_state(&mut self, next_state: State, trigger: CarefulResumeTrigger, now: Instant) {
         let event =
             EventData::CarefulResumePhaseUpdated(qlog::events::resume::CarefulResumePhaseUpdated {
-                old_phase: Some(self.state.into()),
-                new_phase: next_state.into(),
+                old: Some(self.state.into()),
+                new: next_state.into(),
                 state_data: self.into(),
                 restored_data: Some(self.saved.into()),
                 trigger: Some(trigger),
