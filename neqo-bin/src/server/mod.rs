@@ -24,14 +24,13 @@ use futures::{
     future::{select, select_all, Either},
     FutureExt as _,
 };
-use neqo_common::{qdebug, qerror, qinfo, qwarn, Datagram};
+use neqo_common::{qerror, qinfo, qwarn, Datagram};
 use neqo_crypto::{
     constants::{TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256},
     init_db, AntiReplay, Cipher,
 };
 use neqo_transport::{Output, RandomConnectionIdGenerator, Version};
 use neqo_udp::RecvBuf;
-use tokio::time::Sleep;
 use tokio_timerfd::Delay;
 
 use crate::SharedArgs;
@@ -256,7 +255,6 @@ impl ServerRunner {
                     socket.send(&dgram)?;
                 }
                 Output::Callback(new_timeout) => {
-                    qwarn!("Setting timeout of {new_timeout:?}");
                     *timeout = Some(Box::pin(tokio_timerfd::sleep(new_timeout)));
                     break;
                 }
@@ -331,21 +329,9 @@ impl ServerRunner {
 
             match self.ready().await? {
                 Ready::Socket(sockets_index) => {
-                    let after = Instant::now();
-                    qwarn!(
-                        "socket after: {:?} -> {:?}",
-                        after,
-                        after.saturating_duration_since(before)
-                    );
                     self.read_and_process(sockets_index).await?;
                 }
                 Ready::Timeout => {
-                    let after = Instant::now();
-                    qwarn!(
-                        "timeout after: {:?} -> {:?}",
-                        after,
-                        after.saturating_duration_since(before)
-                    );
                     self.timeout = None;
                     self.process().await?;
                 }
